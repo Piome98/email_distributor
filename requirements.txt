@@ -1,0 +1,7 @@
+# Only one hard dependency: COM bridge to the classic Outlook desktop client.
+# Everything else (sqlite3, tkinter, json, re) ships with CPython on Windows,
+# which keeps installation possible on a locked-down corporate laptop:
+#
+#     pip install --user -r requirements.txt
+#
+pywin32>=306

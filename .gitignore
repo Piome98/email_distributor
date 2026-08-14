@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Local runtime data. The identity database contains real colleague and
+# customer names, addresses and phone numbers read out of the mailbox, so it
+# must never reach the remote.
+*.db
+*.db-wal
+*.db-shm
+*.log
+settings.json
+rules.json
+
+.vscode/
+.idea/
+.pytest_cache/
+.mypy_cache/
+Thumbs.db
+desktop.ini
