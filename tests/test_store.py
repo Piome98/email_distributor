@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from email_distributor.identity.learner import company_name_from_domain
+from email_distributor.identity.learner import company_name_from_domain, is_role_account
 from email_distributor.identity.models import (
     SOURCE_INFERRED,
     SOURCE_MANUAL,
@@ -39,6 +39,23 @@ class TestDomainHelpers(unittest.TestCase):
     def test_public_providers_identify_no_company(self):
         for domain in ("gmail.com", "naver.com", "hanmail.net", "outlook.com"):
             self.assertEqual(company_name_from_domain(domain), "", domain)
+
+
+class TestRoleAccounts(unittest.TestCase):
+    def test_system_mailboxes_are_recognised(self):
+        for address in (
+            "noreply@x.com", "no-reply@x.com", "donotreply@x.com",
+            "notifications@x.com", "info@x.com", "support@x.com",
+            "marketing@x.co.kr", "newsletter@x.com", "billing@x.com",
+        ):
+            self.assertTrue(is_role_account(address), address)
+
+    def test_real_people_are_not_flagged(self):
+        for address in (
+            "hong.gildong@x.co.kr", "jsmith@x.com", "taejun@x.co.kr",
+            "y.kim@x.com",
+        ):
+            self.assertFalse(is_role_account(address), address)
 
 
 class TestSourcePrecedence(unittest.TestCase):

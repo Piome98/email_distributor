@@ -207,19 +207,42 @@ and don't need Outlook.
 
 ### Verified
 
-- Full test suite passes.
+- Full test suite passes (71 tests).
 - CLI runs (`status`, `--help`).
 - UI builds, renders both tree views, loads rules, closes cleanly.
+- **Live Outlook run**, against a real mailbox of 603 messages: connected,
+  read the signed-in address, walked the folder tree (including the localised
+  `받은 편지함`), resolved 12/12 senders to real SMTP addresses, learned 300
+  messages into 16 companies and 24 people, and produced a 60-message dry-run
+  plan with 0 errors. The mailbox was not modified.
+
+That run found three defects the fixture tests had missed, now fixed and
+covered by regression tests:
+
+1. The English department pattern used `\s`, which matches a newline, so it
+   spliced two unrelated lines into one department (`SGT\nThe Manus Team`).
+2. Newsletters were being credited with job titles and departments lifted from
+   marketing prose. Person-level fields now require positive evidence of an
+   individual — a name-with-rank or a contact number — and role mailboxes
+   (`noreply@`, `info@`, …) never get person details at all.
+3. The single-character unit suffixes 국, 처 and 단 matched far more ordinary
+   Korean words than departments; `한국고등교육재단` was being filed as
+   somebody's team. Those three suffixes are gone.
 
 ### Not yet done
 
-- **Live Outlook run against a real corporate mailbox.** The COM layer has not
-  been exercised against a production Exchange profile — that is the next step,
-  on the work laptop.
+- **Exchange sender resolution is still unverified.** The test mailbox was an
+  IMAP/Gmail profile, so every sender was already `SMTP` type and the X.500
+  path in `resolve_sender_smtp` never executed. That branch is the one that
+  matters most on the work laptop and needs a run against a real Exchange
+  profile.
 - **Outlook "programmatic access" prompt.** Some managed configurations warn
   when external code reads mail properties. `PropertyAccessor` is used in
   preference to guarded properties to avoid this, but it is unconfirmed in the
   target environment.
+- **Groups are unassigned until you set them**, so the default rule files
+  everything under `Inbox/거래처/미분류/{company}`. Assign groups on the
+  Companies tab to get the intended `거래처/고객사/…` layout.
 - Signature parsing is heuristic and will need vocabulary added as real
   footers turn up — `KO_TITLES` and `DEPT_SUFFIXES` in
   `identity/signature.py` are the places to extend.

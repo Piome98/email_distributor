@@ -39,6 +39,31 @@ MULTI_LEVEL_SUFFIXES = {
 }
 
 
+# Mailbox names that belong to a system or a department rather than a person.
+# Bulk mail from these carries no personal signature, so recording a name,
+# rank or department against them produces noise that pollutes the People view.
+ROLE_ACCOUNT_PREFIXES = (
+    "noreply", "no-reply", "no_reply", "donotreply", "do-not-reply",
+    "notification", "notifications", "alert", "alerts", "mailer", "mail",
+    "newsletter", "news", "marketing", "promo", "info", "support", "help",
+    "helpdesk", "service", "admin", "webmaster", "postmaster", "billing",
+    "invoice", "accounts", "sales", "contact", "hello", "team", "auto",
+    "system", "bounce", "notice", "official", "cs", "customer",
+)
+
+
+def is_role_account(email: str) -> bool:
+    """True when an address is a system/role mailbox rather than a person."""
+    local = (email or "").split("@", 1)[0].strip().lower()
+    if not local:
+        return False
+    return any(
+        local == prefix or local.startswith(prefix + ".") or local.startswith(prefix + "-")
+        or local.startswith(prefix + "_") or local.startswith(prefix)
+        for prefix in ROLE_ACCOUNT_PREFIXES
+    )
+
+
 def company_name_from_domain(domain: str) -> str:
     """Derive a first-guess company name from an email domain.
 
@@ -156,6 +181,10 @@ class Learner:
         sig_is_senders = not sig.email or sig.email == email
         usable = sig if sig_is_senders else None
 
+        # A role mailbox still identifies its organisation, so the company name
+        # is kept; only the person-level fields are discarded.
+        role_account = is_role_account(email)
+
         if domain in PUBLIC_DOMAINS:
             stats.skipped_public += 1
 
@@ -167,15 +196,24 @@ class Learner:
         stamp = message.received.isoformat(timespec="seconds") if message.received else ""
         seen_before = self.store.person_by_email(email) is not None
 
+        person_fields = usable if (usable and not role_account) else None
         self.store.upsert_person(
             email,
-            display_name=(usable.name if usable and usable.name else message.sender_name),
+            display_name=(
+                person_fields.name
+                if person_fields and person_fields.name
+                else message.sender_name
+            ),
             company_id=company_id,
-            department=(usable.department if usable else ""),
-            title=(usable.title if usable else ""),
-            phone=(usable.phone if usable else ""),
-            mobile=(usable.mobile if usable else ""),
-            source=SOURCE_SIGNATURE if usable and not usable.is_empty() else SOURCE_INFERRED,
+            department=(person_fields.department if person_fields else ""),
+            title=(person_fields.title if person_fields else ""),
+            phone=(person_fields.phone if person_fields else ""),
+            mobile=(person_fields.mobile if person_fields else ""),
+            source=(
+                SOURCE_SIGNATURE
+                if person_fields and not person_fields.is_empty()
+                else SOURCE_INFERRED
+            ),
             seen_at=stamp,
             bump_count=True,
         )

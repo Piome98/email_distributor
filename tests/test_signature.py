@@ -92,6 +92,63 @@ class TestParseEnglish(unittest.TestCase):
         self.assertEqual(info.company, "Acme Trading Co., Ltd.")
 
 
+class TestBulkMailIsNotAPerson(unittest.TestCase):
+    """Regressions found by running against a real mailbox.
+
+    Newsletters and notification mail contain capitalised prose that the
+    title/department patterns will happily misread as somebody's job.
+    """
+
+    def test_marketing_mail_yields_no_title_or_department(self):
+        info = signature.parse(
+            "New Course! Learn how to create things.\n"
+            "The Google Team\nCoursera Inc.\nBrowse Catalog\nUnsubscribe here",
+            sender_name="Coursera",
+        )
+        self.assertEqual(info.title, "")
+        self.assertEqual(info.department, "")
+
+    def test_department_never_splices_two_lines(self):
+        """`\\s` in the English pattern used to match across a newline."""
+        info = signature.parse("Sent from SGT\nThe Manus Team\nmanus.im", sender_name="Manus")
+        self.assertNotIn("\n", info.department)
+
+    def test_a_real_signature_still_keeps_its_fields(self):
+        info = signature.parse("홍길동 부장\n영업1팀\n(주)한국전자")
+        self.assertEqual(info.title, "부장")
+        self.assertEqual(info.department, "영업1팀")
+
+    def test_an_organisation_name_is_not_a_department(self):
+        """"한국고등교육재단" is a foundation, not somebody's team."""
+        info = signature.parse(
+            "홍길동 대리\n한국고등교육재단 소식\n(주)위시켓\nM. 010-1111-2222"
+        )
+        self.assertNotEqual(info.department, "한국고등교육재단")
+
+    def test_common_words_ending_in_dropped_suffixes(self):
+        for text in ("한국 시장 동향", "거래처 안내", "판단 기준"):
+            info = signature.parse(f"김철수 과장\n{text}\n(주)테스트\nM. 010-1-1")
+            self.assertNotIn(info.department, ("한국", "거래처", "판단"))
+
+    def test_contact_number_is_enough_evidence_of_a_person(self):
+        info = signature.parse(
+            "Jane Doe\nOverseas Sales Team\nAcme Co., Ltd.\nM. 010-1234-5678"
+        )
+        self.assertEqual(info.department, "Overseas Sales Team")
+
+
+class TestFieldsAreClean(unittest.TestCase):
+    def test_no_field_contains_a_newline_or_double_space(self):
+        info = signature.parse(
+            "김철수 과장\n영업팀\n(주)대한산업\nTel. 02-111-2222\nM. 010-3333-4444"
+        )
+        for value in (info.name, info.title, info.department, info.company,
+                      info.phone, info.mobile):
+            self.assertNotIn("\n", value)
+            self.assertNotIn("  ", value)
+            self.assertEqual(value, value.strip())
+
+
 class TestFallbacks(unittest.TestCase):
     def test_empty_body_falls_back_to_display_name(self):
         info = signature.parse("", sender_name="홍길동")

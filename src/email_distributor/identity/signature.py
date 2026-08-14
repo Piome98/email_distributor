@@ -49,10 +49,19 @@ EN_TITLES = [
 ]
 
 # Organisational-unit suffixes. Used to spot a department name.
+#
+# 국, 처 and 단 were tried and removed: as single characters they match far
+# more ordinary Korean words than departments - 한국/외국/결국, 거래처/출처/근처,
+# and 재단/집단/판단. "한국고등교육재단" (a foundation) was being filed as
+# somebody's department because of the trailing 단.
 DEPT_SUFFIXES = [
     "사업본부", "사업부문", "연구소", "사업부", "본부", "센터", "그룹",
-    "팀", "실", "부", "과", "파트", "국", "처", "단",
+    "팀", "실", "부", "과", "파트",
 ]
+
+# Suffixes that mark a whole organisation rather than a unit inside one, so a
+# match ending in one of these is never a department.
+ORG_NOT_DEPT_SUFFIXES = ("재단", "법인", "공단", "공사", "협회", "조합", "학회")
 
 EN_DEPT_SUFFIXES = [
     "Business Unit", "Headquarters", "Laboratory", "Department", "Institute",
@@ -98,9 +107,11 @@ RE_EN_TITLE = re.compile(rf"\b({_EN_TITLE_ALT})\b", re.IGNORECASE)
 # "영업1팀", "글로벌사업본부", "R&D센터"
 RE_DEPT = re.compile(rf"([A-Za-z0-9가-힣&\.\-]{{1,20}}?(?:{_DEPT_ALT}))(?![가-힣])")
 
-# "Overseas Sales Team", "R&D Division"
+# "Overseas Sales Team", "R&D Division". The inner separators are explicitly
+# spaces and tabs rather than \s, which would match a newline and let the
+# pattern splice two unrelated lines into one bogus department.
 RE_EN_DEPT = re.compile(
-    r"([A-Z][A-Za-z0-9&\.\-]*(?:\s+[A-Z&][A-Za-z0-9&\.\-]*){0,3}\s+"
+    r"([A-Z][A-Za-z0-9&\.\-]*(?:[ \t]+[A-Z&][A-Za-z0-9&\.\-]*){0,3}[ \t]+"
     rf"(?:{'|'.join(re.escape(s) for s in EN_DEPT_SUFFIXES)}))\b"
 )
 
@@ -194,6 +205,15 @@ class SignatureInfo:
             if field_value:
                 score += weight
         return score
+
+
+def _clean_field(value: str) -> str:
+    """Collapse any internal whitespace and trim punctuation.
+
+    A regex that spans a line break would otherwise store a value containing a
+    newline, which then breaks folder names and category names downstream.
+    """
+    return re.sub(r"\s+", " ", value or "").strip(" ,|/-·\t\r\n")
 
 
 def strip_quoted(body: str) -> str:
@@ -317,6 +337,7 @@ def parse(body: str, sender_name: str = "") -> SignatureInfo:
             len(candidate) >= 2
             and candidate not in DEPT_SUFFIXES
             and candidate not in DEPT_STOPWORDS
+            and not candidate.endswith(ORG_NOT_DEPT_SUFFIXES)
         ):
             info.department = candidate
     if not info.department:
@@ -330,6 +351,15 @@ def parse(body: str, sender_name: str = "") -> SignatureInfo:
     email = RE_EMAIL.search(blob)
     if email:
         info.email = email.group(0).lower()
+
+    # Bulk and marketing mail has no personal signature, but it does have
+    # plenty of capitalised prose that these patterns will happily mistake for
+    # a job title or a department. Require some positive evidence that a real
+    # individual signed off - a name-with-rank, or a contact number - before
+    # attributing person-level fields to anybody.
+    if not (RE_KO_NAME_TITLE.search(blob) or info.mobile or info.phone):
+        info.title = ""
+        info.department = ""
 
     if not info.name:
         # A Latin-script name sits on a line of its own, above the job title.
@@ -350,4 +380,6 @@ def parse(body: str, sender_name: str = "") -> SignatureInfo:
         else:
             info.name = fallback
 
+    for field_name in ("name", "title", "department", "company", "phone", "mobile"):
+        setattr(info, field_name, _clean_field(getattr(info, field_name)))
     return info
