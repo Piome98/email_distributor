@@ -176,3 +176,51 @@ python -m unittest discover -s tests
 62 tests covering signature parsing, identity resolution, source precedence,
 rule matching, template expansion and folder-name safety. They use fixture data
 and don't need Outlook.
+
+---
+
+## Status
+
+### Done
+
+- **Outlook COM bridge** — connect, folder navigation and creation (handles the
+  localised `받은 편지함`), colour categories, move, read-state.
+- **Exchange sender resolution** — X.500 DNs turned into real SMTP addresses
+  through `PR_SMTP_ADDRESS` / `PR_SENT_REPRESENTING_SMTP_ADDRESS`, with
+  fallbacks.
+- **Identity model** — Group → Company → Person on SQLite, with
+  `manual > signature > inferred` source precedence enforced on every write.
+- **Signature parser** — mixed Korean/English blocks; extracts name, rank,
+  department, company, landline and mobile. Skips quoted reply chains, legal
+  disclaimers, and fax numbers.
+- **Learner** — builds the database from Inbox, Inbox subfolders and Sent Items.
+- **Rules engine** — JSON rules, `all`/`any` matching, ordered evaluation with
+  `stop_on_match`, placeholder expansion.
+- **Distributor** — dry run by default, per-message ledger so restarts never
+  re-file, categories applied before moves.
+- **Watcher** — interruptible polling loop, own COM and SQLite handles per
+  thread, re-reads rules each pass.
+- **Desktop UI** — five tabs (Run / Companies / People / Rules / Settings),
+  worker threads that never touch widgets.
+- **CLI** — `status`, `learn`, `run [--live]`, `watch`.
+- **62 tests**, all passing, no Outlook required.
+
+### Verified
+
+- Full test suite passes.
+- CLI runs (`status`, `--help`).
+- UI builds, renders both tree views, loads rules, closes cleanly.
+
+### Not yet done
+
+- **Live Outlook run against a real corporate mailbox.** The COM layer has not
+  been exercised against a production Exchange profile — that is the next step,
+  on the work laptop.
+- **Outlook "programmatic access" prompt.** Some managed configurations warn
+  when external code reads mail properties. `PropertyAccessor` is used in
+  preference to guarded properties to avoid this, but it is unconfirmed in the
+  target environment.
+- Signature parsing is heuristic and will need vocabulary added as real
+  footers turn up — `KO_TITLES` and `DEPT_SUFFIXES` in
+  `identity/signature.py` are the places to extend.
+- No packaging into a single .exe yet; the app runs from source.
