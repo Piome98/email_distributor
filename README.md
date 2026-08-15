@@ -29,24 +29,49 @@ Everything else it uses (SQLite, Tkinter, JSON) ships inside Python.
 
 ## Install
 
-```bash
-pip install --user pywin32
-```
+Double-click the batch files, in this order:
 
-That is the whole installation. Then, from the project folder, double-click
-**`run.pyw`** for the desktop app, or use the command line:
+| File | What it does |
+|---|---|
+| **`setup.bat`** | Installs `pywin32` (user-level, no admin) and checks Outlook is reachable |
+| **`learn.bat`** | Reads your mailbox and builds the database. **Read-only.** |
+| **`start.bat`** | Opens the desktop app |
+| **`preview.bat`** | Dry run — shows what would be filed, changes nothing |
+
+That is the whole installation: Python plus one package.
+
+> The `.bat` files are deliberately **ASCII-only**. `cmd.exe` parses a batch
+> file using the console codepage, so a multi-byte character shifts the parser
+> and splits later tokens — `echo` becomes `ho`. Korean text belongs in the
+> Python layer, which handles UTF-8 correctly.
+
+### Without the batch files
 
 ```bash
 python cli.py status
 ```
 
-Both launchers put `src/` on the path themselves, so nothing needs installing
-and `PYTHONPATH` never has to be set.
+`cli.py`, `run_tests.py` and `run.pyw` each put `src/` on the path themselves,
+so nothing needs installing and `PYTHONPATH` never has to be set.
 
 > `python -m email_distributor` works **only** after `pip install --user -e .`
 > or with `PYTHONPATH=src`. Use `python cli.py` instead — it works from a
 > freshly opened terminal in a copied folder, which is the point of the
 > no-install design.
+
+### A standalone .exe
+
+If the target PC has no Python and you cannot install it, run **`build_exe.bat`**
+on a machine where you can, then copy the resulting `dist\EmailDistributor`
+folder across. It bundles its own Python.
+
+It builds a folder rather than a single file on purpose: a one-file build
+unpacks itself into `%TEMP%` on every launch, and managed PCs often forbid
+executing anything from there.
+
+Be aware the .exe is **unsigned**. SmartScreen warns on first run, and some
+corporate antivirus quarantines PyInstaller output as a false positive. Where
+Python *can* be installed, the `.bat` route is the more reliable one.
 
 ---
 
