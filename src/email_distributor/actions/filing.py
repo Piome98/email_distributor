@@ -213,9 +213,15 @@ class Distributor:
         if not message.sender_email:
             result.skipped_reason = "sender address could not be resolved"
             return result
-        if not reprocess and self.store.is_processed(message.entry_id):
-            result.skipped_reason = "already processed"
-            return result
+        # Skip only when the same thing has already been done to this message.
+        # Comparing the decision rather than merely "have I seen this?" means a
+        # corrected ruleset takes effect on mail already handled, instead of
+        # that mail being frozen under whatever the rules used to say.
+        if not reprocess:
+            previous = self.store.processed_action(message.entry_id)
+            if previous is not None and previous == decision.describe():
+                result.skipped_reason = "already filed the same way"
+                return result
         if not decision.has_effect:
             result.skipped_reason = decision.describe()
             return result

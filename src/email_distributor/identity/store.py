@@ -497,6 +497,19 @@ class IdentityStore:
             is not None
         )
 
+    def processed_action(self, entry_id: str) -> Optional[str]:
+        """What was previously done to this message, or None if untouched.
+
+        Callers compare this with what they intend to do now. A ledger that
+        only answers "seen before?" turns into a trap: once a message has been
+        handled under one set of rules it can never be handled again, so
+        correcting the rules has no effect on any mail already seen.
+        """
+        row = self.conn.execute(
+            "SELECT action FROM processed WHERE entry_id = ?", (entry_id,)
+        ).fetchone()
+        return row["action"] if row else None
+
     def mark_processed(self, entry_id: str, rule_name: str, action: str) -> None:
         self.conn.execute(
             """INSERT INTO processed (entry_id, processed_at, rule_name, action)

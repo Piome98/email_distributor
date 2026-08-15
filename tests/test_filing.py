@@ -132,16 +132,51 @@ class TestSuccessfulFiling(FilingTestCase):
         moved_again = dist._process_one(
             FakeItem("E1-MOVED"), make_message("E1-MOVED"), reprocess=False
         )
-        self.assertEqual(moved_again.skipped_reason, "already processed")
+        self.assertIn("already filed", moved_again.skipped_reason)
         self.assertEqual(len(client.moved), 1)
 
-    def test_already_processed_is_skipped(self):
+    def test_the_same_decision_twice_is_skipped(self):
         client = FakeClient()
         dist = self.distributor(client)
-        self.store.mark_processed("E1", "rule", "action")
-        result = dist._process_one(FakeItem("E1"), make_message(), reprocess=False)
-        self.assertEqual(result.skipped_reason, "already processed")
-        self.assertEqual(client.moved, [])
+        dist._process_one(FakeItem("E1"), make_message(), reprocess=False)
+        again = dist._process_one(FakeItem("E1"), make_message(), reprocess=False)
+        self.assertIn("already filed", again.skipped_reason)
+        self.assertEqual(len(client.moved), 1)
+
+    def test_a_changed_decision_is_acted_on(self):
+        """A corrected ruleset must reach mail that was already handled.
+
+        A ledger answering only "seen before?" freezes every message under
+        whatever the rules said the first time.
+        """
+        client = FakeClient()
+        self.distributor(client)._process_one(
+            FakeItem("E1"), make_message(), reprocess=False
+        )
+
+        self.ruleset = RuleSet([
+            Rule(
+                name="새 규칙",
+                match=Match(),
+                actions=Actions(move_to="Inbox/거래처/{company}/{person}"),
+            )
+        ])
+        result = self.distributor(client)._process_one(
+            FakeItem("E1"), make_message(), reprocess=False
+        )
+        self.assertEqual(result.skipped_reason, "")
+        self.assertEqual(client.moved[-1][1], "Inbox/거래처/한국전자/홍길동")
+
+    def test_a_stale_no_op_record_does_not_block_filing(self):
+        """Exactly the trap hit in practice: a tag-only record from an older
+        build stopped every message from ever being filed."""
+        client = FakeClient()
+        self.store.mark_processed("E1", "old rule", "old rule: categories: 미분류")
+        result = self.distributor(client)._process_one(
+            FakeItem("E1"), make_message(), reprocess=False
+        )
+        self.assertEqual(result.skipped_reason, "")
+        self.assertEqual(client.moved, [("E1", "Inbox/한국전자")])
 
     def test_reprocess_overrides_the_ledger(self):
         client = FakeClient()
