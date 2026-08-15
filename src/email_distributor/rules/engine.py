@@ -207,7 +207,7 @@ class Decision:
 # Bumped whenever the shipped default rules change in a way that matters.
 # A saved file carrying an older version is regenerated - but only if the user
 # never edited it. See RuleSet.load.
-RULESET_VERSION = 3
+RULESET_VERSION = 4
 
 
 class RuleSet:
@@ -374,8 +374,11 @@ def default_ruleset() -> RuleSet:
     """A safe, useful starting point.
 
     Ordering matters: internal mail is claimed first so colleagues never end up
-    filed as an external company, then confirmed 거래처 are filed under
-    거래처/{업체}/{담당자}.
+    filed as an external company. It goes to 사내/{담당자}, mirroring the
+    거래처/{업체}/{담당자} shape - one folder per colleague, no company level,
+    because there is only ever one company.
+
+    Confirmed 거래처 are then filed under 거래처/{업체}/{담당자}.
 
     A company is filed when either test says it is genuinely a 거래처:
 
@@ -403,7 +406,10 @@ def default_ruleset() -> RuleSet:
             Rule(
                 name="사내 메일 (internal)",
                 match=Match(is_internal=True),
-                actions=Actions(categories=["사내"]),
+                actions=Actions(
+                    move_to="Inbox/사내/{person}",
+                    categories=["사내"],
+                ),
             ),
             Rule(
                 name="거래처 - 주고받은 상대 (you have written to them)",

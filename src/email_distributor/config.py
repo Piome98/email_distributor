@@ -52,6 +52,17 @@ class Settings:
     # Seconds between polls of the watched folder.
     poll_interval: int = 60
 
+    # How many messages a manual run examines. 0 means every message.
+    #
+    # Defaults to unlimited because a cap makes two very different situations
+    # look identical: "the rules file nothing" and "nothing in the newest 200
+    # happened to be eligible".
+    run_limit: int = 0
+
+    # How many the background watcher looks at per poll. This one stays capped:
+    # it runs every minute and only needs to catch mail that has just arrived.
+    poll_limit: int = 200
+
     # When True, actions are logged but never applied to the mailbox. This is
     # the default so a first run can never surprise anyone by moving mail.
     dry_run: bool = True
@@ -93,7 +104,17 @@ class Settings:
         except (json.JSONDecodeError, OSError):
             return cls()
         known = {f for f in cls.__dataclass_fields__}
-        return cls(**{k: v for k, v in raw.items() if k in known})
+        settings = cls(**{k: v for k, v in raw.items() if k in known})
+
+        # A public provider can never be an "internal" domain: it would make
+        # every Gmail or Naver sender on earth a colleague. Saved settings are
+        # filtered as well as new ones, so a value stored before this check
+        # existed is corrected rather than honoured forever.
+        settings.internal_domains = [
+            d for d in settings.internal_domains
+            if d.strip().lower().lstrip("@") not in PUBLIC_DOMAINS
+        ]
+        return settings
 
 
 # Free / public mail providers. A sender at one of these tells us nothing about

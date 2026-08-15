@@ -132,7 +132,7 @@ class Watcher:
             summary = distributor.process_folder(
                 distributor.client.get_folder(self.settings.watch_folder)
                 or distributor.client.inbox(),
-                limit=200,
+                limit=self.settings.poll_limit,
                 on_result=report,
             )
             with self._lock:

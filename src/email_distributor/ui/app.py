@@ -171,6 +171,11 @@ class App(tk.Tk):
             command=self._on_toggle_reprocess,
         ).pack(side="left", padx=(16, 0))
 
+        ttk.Label(row, text="   검사할 메일 수:").pack(side="left")
+        self.var_run_limit = tk.StringVar(value=str(self.settings.run_limit))
+        ttk.Entry(row, textvariable=self.var_run_limit, width=7).pack(side="left", padx=4)
+        ttk.Label(row, text="(0 = 전체)").pack(side="left")
+
         ttk.Button(row, text="한 번 실행  (Run once)", command=self._on_run_once).pack(
             side="right", padx=4
         )
@@ -479,19 +484,30 @@ class App(tk.Tk):
     def _on_run_once(self) -> None:
         self.settings.dry_run = self.var_dry.get()
         self.settings.reprocess_handled = self.var_reprocess.get()
+        try:
+            self.settings.run_limit = max(0, int(self.var_run_limit.get().strip()))
+        except ValueError:
+            self.settings.run_limit = 0
+            self.var_run_limit.set("0")
+        self.settings.save()
 
         def job(client: OutlookClient, store: IdentityStore) -> None:
             ruleset = RuleSet.load()
             distributor = Distributor(client, store, ruleset, self.settings)
             mode = "DRY RUN" if self.settings.dry_run else "LIVE"
             again = " + 이미 처리한 메일 포함" if self.settings.reprocess_handled else ""
+            scope = (
+                "전체" if self.settings.run_limit == 0
+                else f"최신 {self.settings.run_limit}건"
+            )
             self._log(
                 "info",
-                f"--- Run once on '{self.settings.watch_folder}' ({mode}{again}) ---",
+                f"--- Run once on '{self.settings.watch_folder}' "
+                f"({mode}{again}, {scope}) ---",
             )
 
             summary: RunSummary = distributor.process_watch_folder(
-                limit=200,
+                limit=self.settings.run_limit,
                 reprocess=self.settings.reprocess_handled,
                 on_result=lambda r: self._log(
                     "error" if r.error else "action",

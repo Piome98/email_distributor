@@ -175,13 +175,6 @@ class TestRuleSetEvaluation(unittest.TestCase):
 
 
 class TestDefaultRuleset(unittest.TestCase):
-    def test_internal_mail_is_claimed_before_company_filing(self):
-        decision = default_ruleset().evaluate(
-            make_message(), make_identity(is_internal=True)
-        )
-        self.assertEqual(decision.rule_names, ["사내 메일 (internal)"])
-        self.assertEqual(decision.move_to, "")  # colleagues are tagged, not moved
-
     def test_company_you_have_written_to_is_filed(self):
         """The main path, and it needs no setup: Sent Items proves the tie."""
         identity = make_identity(
@@ -221,11 +214,19 @@ class TestDefaultRuleset(unittest.TestCase):
         self.assertEqual(decision.move_to, "")
         self.assertEqual(decision.categories, ["미분류"])
 
-    def test_internal_mail_is_tagged_but_never_moved(self):
+    def test_internal_mail_goes_to_a_per_colleague_folder(self):
+        """사내/{담당자} - no company level, since there is only one company."""
         decision = default_ruleset().evaluate(
-            make_message(), make_identity(is_internal=True)
+            make_message(), make_identity(is_internal=True, display_name="홍길동")
         )
-        self.assertEqual(decision.move_to, "")
+        self.assertEqual(decision.move_to, "Inbox/사내/홍길동")
+        self.assertIn("사내", decision.categories)
+
+    def test_internal_is_claimed_before_the_company_rules(self):
+        """A colleague must never be filed as an external 거래처."""
+        identity = make_identity(is_internal=True, display_name="홍길동")
+        decision = default_ruleset().evaluate(make_message(), identity)
+        self.assertEqual(decision.rule_names, ["사내 메일 (internal)"])
 
 
 class TestVersionUpgrade(unittest.TestCase):
