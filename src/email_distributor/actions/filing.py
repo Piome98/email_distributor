@@ -25,6 +25,17 @@ from ..rules.engine import Decision, RuleSet
 log = logging.getLogger(__name__)
 
 
+class OutlookActionError(RuntimeError):
+    """A requested change to the mailbox could not be carried out."""
+
+
+def _safe_entry_id(item: Any) -> str:
+    try:
+        return str(item.EntryID)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 @dataclass
 class FileResult:
     message: Message
@@ -112,8 +123,17 @@ class Distributor:
             self._folder_cache[path] = self.client.ensure_folder(path)
         return self._folder_cache[path]
 
-    def apply(self, item: Any, decision: Decision) -> bool:
-        """Carry out a decision against a live Outlook item."""
+    def apply(self, item: Any, decision: Decision) -> tuple[bool, str]:
+        """Carry out a decision against a live Outlook item.
+
+        Returns (changed, new_entry_id). `new_entry_id` is non-empty only when
+        the message was moved, because Outlook issues a fresh EntryID on a
+        folder change and the ledger has to record the new one.
+
+        A failed move raises rather than returning quietly: applying a category
+        but leaving the message where it was is not the requested outcome, and
+        reporting it as success would be a lie.
+        """
         changed = False
 
         # Categories and read-state are set before the move, because after
@@ -125,11 +145,18 @@ class Distributor:
         if decision.mark_read is not None:
             changed |= self.client.mark_read(item, decision.mark_read)
 
+        new_entry_id = ""
         if self.settings.move_to_folders and decision.move_to:
             folder = self._target_folder(decision.move_to)
-            changed |= self.client.move_item(item, folder)
+            moved = self.client.move_item(item, folder)
+            if moved is None:
+                raise OutlookActionError(
+                    f"could not move message into {decision.move_to!r}"
+                )
+            changed = True
+            new_entry_id = str(_safe_entry_id(moved))
 
-        return changed
+        return changed, new_entry_id
 
     # ------------------------------------------------------------------
     def process_folder(
@@ -181,13 +208,18 @@ class Distributor:
             return result  # planned, deliberately not applied
 
         try:
-            result.applied = self.apply(item, decision)
-            self.store.mark_processed(
-                message.entry_id,
-                " + ".join(decision.rule_names),
-                decision.describe(),
-            )
+            result.applied, new_entry_id = self.apply(item, decision)
+            rules = " + ".join(decision.rule_names)
+            self.store.mark_processed(message.entry_id, rules, decision.describe())
+            # Outlook issues a new EntryID when a message changes folder, so
+            # the pre-move id alone would not recognise this message again.
+            # Without the new one, a later pass over the destination folder
+            # re-files mail that is already filed - and Outlook then refuses
+            # the move because the message is already there.
+            if new_entry_id and new_entry_id != message.entry_id:
+                self.store.mark_processed(new_entry_id, rules, decision.describe())
         except Exception as exc:  # noqa: BLE001 - one failure must not stop the run
+            result.applied = False
             result.error = str(exc)
             log.warning("failed to file %s: %s", message.summary(), exc)
 

@@ -425,13 +425,18 @@ class OutlookClient:
             log.warning("could not set categories on item: %s", exc)
             return False
 
-    def move_item(self, item: Any, target_folder: Any) -> bool:
+    def move_item(self, item: Any, target_folder: Any) -> Optional[Any]:
+        """Move an item, returning the relocated item, or None on failure.
+
+        The relocated item matters: Outlook issues a *new* EntryID when a
+        message changes folder, so the caller needs the new one to record that
+        this message has been handled.
+        """
         try:
-            item.Move(target_folder)
-            return True
+            return item.Move(target_folder)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not move item: %s", exc)
-            return False
+            return None
 
     def mark_read(self, item: Any, read: bool = True) -> bool:
         try:

@@ -173,9 +173,10 @@ numbers read from your mailbox. It is **git-ignored** and never leaves the PC.
 python -m unittest discover -s tests
 ```
 
-62 tests covering signature parsing, identity resolution, source precedence,
-rule matching, template expansion and folder-name safety. They use fixture data
-and don't need Outlook.
+113 tests covering signature parsing, identity resolution, source precedence,
+schema migration, rule matching, template expansion, folder-name safety, and
+the filing path (against a fake Outlook client). They use fixture data and
+don't need Outlook.
 
 ---
 
@@ -209,14 +210,19 @@ and don't need Outlook.
 
 ### Verified
 
-- Full test suite passes (100 tests).
+- Full test suite passes (113 tests).
 - CLI runs (`status`, `--help`).
 - UI builds, renders both tree views, loads rules, closes cleanly.
-- **Live Outlook run**, against a real mailbox of 603 messages: connected,
-  read the signed-in address, walked the folder tree (including the localised
-  `받은 편지함`), resolved 12/12 senders to real SMTP addresses, learned 300
-  messages into 16 companies and 24 people, and produced a 60-message dry-run
-  plan with 0 errors. The mailbox was not modified.
+- **Live Outlook run**, read-only: connected, read the signed-in address,
+  walked the folder tree (including the localised `받은 편지함`), resolved 12/12
+  senders to real SMTP addresses, learned 300 messages into 44 companies and
+  68 people, and produced a 60-message dry-run plan with 0 errors. The mailbox
+  was not modified.
+- **Live apply path**, contained to a temporary test folder: 8 real messages
+  copied in, filed for real — 8/8 moved into per-company folders, colour
+  categories applied, source folder emptied, 0 errors. A second pass correctly
+  skipped all 8 as already processed, and the test folder was removed
+  afterwards. The Inbox originals were never touched.
 
 That run found three defects the fixture tests had missed, now fixed and
 covered by regression tests:
@@ -251,6 +257,17 @@ important correction to the learner:
    split into the person 공인 ranked 회계사; `© 2026 Google LLC` kept its
    copyright prefix; and 과 — the everyday conjunction "and" — was dropped as
    a unit suffix after `행동과 심리` became the department `행동과`.
+
+Finally, running the **apply** path for real found two more:
+
+7. **A failed move was reported as success.** `applied` was true whenever
+   *anything* changed, so a message that got a category but never moved —
+   because Outlook refused — was logged as filed. A failed move is now an
+   error, and the message is not recorded as processed, so it will be retried.
+8. **Outlook issues a new EntryID when a message changes folder.** The ledger
+   only held the pre-move id, so a later pass over the destination folder
+   re-filed everything already filed, and Outlook then refused each move
+   because the message was already there. Both ids are now recorded.
 
 ### Not yet done
 
