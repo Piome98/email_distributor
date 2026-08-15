@@ -312,6 +312,50 @@ class TestTagOnlyIsNotConsumed(FilingTestCase):
         self.assertEqual(client.moved, [("E1", "Inbox/거래처/한국전자")])
 
 
+class TestReprocessSetting(FilingTestCase):
+    """The user's checkbox: re-examine mail already handled."""
+
+    class FolderClient(FakeClient):
+        """Adds the folder lookup process_watch_folder needs."""
+
+        def __init__(self, items, **kw):
+            super().__init__(**kw)
+            self.items = items
+
+        def get_folder(self, path):
+            return "INBOX" if path == "Inbox" else super().get_folder(path)
+
+        def iter_messages(self, folder, limit=200, unread_only=False, newest_first=True):
+            return iter(self.items)
+
+    def _client(self):
+        return self.FolderClient([(FakeItem("E1"), make_message())])
+
+    def test_off_by_default_so_handled_mail_is_left_alone(self):
+        client = self._client()
+        dist = self.distributor(client)
+        dist.process_watch_folder(limit=10)
+        summary = dist.process_watch_folder(limit=10)
+        self.assertEqual(len(client.moved), 1)
+        self.assertTrue(summary.results[0].skipped_reason)
+
+    def test_the_setting_forces_a_second_pass(self):
+        client = self._client()
+        self.settings.reprocess_handled = True
+        dist = self.distributor(client)
+        dist.process_watch_folder(limit=10)
+        dist.process_watch_folder(limit=10)
+        self.assertEqual(len(client.moved), 2)
+
+    def test_an_explicit_argument_overrides_the_setting(self):
+        client = self._client()
+        self.settings.reprocess_handled = True
+        dist = self.distributor(client)
+        dist.process_watch_folder(limit=10)
+        dist.process_watch_folder(limit=10, reprocess=False)
+        self.assertEqual(len(client.moved), 1)
+
+
 class TestDryRun(FilingTestCase):
     def test_dry_run_changes_nothing(self):
         self.settings.dry_run = True

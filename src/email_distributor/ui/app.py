@@ -163,6 +163,14 @@ class App(tk.Tk):
             command=self._on_toggle_dry,
         ).pack(side="left")
 
+        self.var_reprocess = tk.BooleanVar(value=self.settings.reprocess_handled)
+        ttk.Checkbutton(
+            row,
+            text="이미 처리한 메일도 다시 분류",
+            variable=self.var_reprocess,
+            command=self._on_toggle_reprocess,
+        ).pack(side="left", padx=(16, 0))
+
         ttk.Button(row, text="한 번 실행  (Run once)", command=self._on_run_once).pack(
             side="right", padx=4
         )
@@ -170,6 +178,16 @@ class App(tk.Tk):
             row, text="자동 감시 시작  (Start watching)", command=self._on_toggle_watch
         )
         self.btn_watch.pack(side="right", padx=4)
+
+        ttk.Label(
+            mid,
+            text="한 번 처리한 메일은 같은 결과라면 다시 옮기지 않습니다. "
+            "규칙을 바꾸거나 거래처를 새로 지정한 뒤에는 '이미 처리한 메일도 다시 분류'를 "
+            "켜고 실행하세요. (자동 감시에는 적용되지 않습니다)",
+            foreground="#555555",
+            wraplength=980,
+            justify="left",
+        ).pack(anchor="w", padx=8, pady=(0, 6))
 
         log_frame = ttk.LabelFrame(frame, text="활동 기록 (Activity)")
         log_frame.pack(fill="both", expand=True, padx=6, pady=6)
@@ -448,17 +466,33 @@ class App(tk.Tk):
 
         self._run_worker(job, "폴더 미리보기" if preview else "폴더 만들기")
 
+    def _on_toggle_reprocess(self) -> None:
+        self.settings.reprocess_handled = self.var_reprocess.get()
+        self.settings.save()
+        self._log(
+            "info",
+            "이미 처리한 메일도 다시 분류: "
+            + ("켜짐 - 지난 메일까지 다시 검사합니다." if self.settings.reprocess_handled
+               else "꺼짐 - 새 메일만 처리합니다."),
+        )
+
     def _on_run_once(self) -> None:
         self.settings.dry_run = self.var_dry.get()
+        self.settings.reprocess_handled = self.var_reprocess.get()
 
         def job(client: OutlookClient, store: IdentityStore) -> None:
             ruleset = RuleSet.load()
             distributor = Distributor(client, store, ruleset, self.settings)
             mode = "DRY RUN" if self.settings.dry_run else "LIVE"
-            self._log("info", f"--- Run once on '{self.settings.watch_folder}' ({mode}) ---")
+            again = " + 이미 처리한 메일 포함" if self.settings.reprocess_handled else ""
+            self._log(
+                "info",
+                f"--- Run once on '{self.settings.watch_folder}' ({mode}{again}) ---",
+            )
 
             summary: RunSummary = distributor.process_watch_folder(
                 limit=200,
+                reprocess=self.settings.reprocess_handled,
                 on_result=lambda r: self._log(
                     "error" if r.error else "action",
                     r.describe(),

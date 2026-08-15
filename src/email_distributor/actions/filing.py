@@ -292,6 +292,7 @@ class Distributor:
         self,
         limit: int = 200,
         unread_only: bool = False,
+        reprocess: Optional[bool] = None,
         on_result: Optional[Callable[[FileResult], None]] = None,
     ) -> RunSummary:
         folder = self.client.get_folder(self.settings.watch_folder)
@@ -299,6 +300,12 @@ class Distributor:
             raise ValueError(
                 f"Watch folder not found: {self.settings.watch_folder!r}"
             )
+        if reprocess is None:
+            reprocess = self.settings.reprocess_handled
         return self.process_folder(
-            folder, limit=limit, unread_only=unread_only, on_result=on_result
+            folder,
+            limit=limit,
+            unread_only=unread_only,
+            reprocess=reprocess,
+            on_result=on_result,
         )

@@ -62,6 +62,15 @@ class Settings:
     # Move messages into per-company folders.
     move_to_folders: bool = True
 
+    # Re-examine mail the app has already handled.
+    #
+    # Off by default, because the normal job is new mail. Turn it on after
+    # changing rules or confirming a company, when mail that was already seen
+    # should be re-filed. It applies to a manual run only - the background
+    # watcher always leaves handled mail alone, since re-moving a message into
+    # the folder it already sits in just makes Outlook refuse.
+    reprocess_handled: bool = False
+
     # Domains treated as "us" - mail from these is internal, never filed as a
     # customer/vendor. Populated on first run from the user's own address.
     internal_domains: list[str] = field(default_factory=list)
