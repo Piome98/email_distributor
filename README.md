@@ -63,15 +63,28 @@ so nothing needs installing and `PYTHONPATH` never has to be set.
 
 If the target PC has no Python and you cannot install it, run **`build_exe.bat`**
 on a machine where you can, then copy the resulting `dist\EmailDistributor`
-folder across. It bundles its own Python.
+folder (~30 MB) across. It bundles its own Python — the target needs nothing.
 
-It builds a folder rather than a single file on purpose: a one-file build
-unpacks itself into `%TEMP%` on every launch, and managed PCs often forbid
-executing anything from there.
+```
+EmailDistributor.exe            double-click, opens the app
+EmailDistributor.exe status     what the database knows
+EmailDistributor.exe learn      build the database (read-only)
+EmailDistributor.exe run        dry run, changes nothing
+```
 
-Be aware the .exe is **unsigned**. SmartScreen warns on first run, and some
-corporate antivirus quarantines PyInstaller output as a false positive. Where
-Python *can* be installed, the `.bat` route is the more reliable one.
+Two deliberate build choices:
+
+- **A folder, not a single file.** `--onefile` unpacks itself into `%TEMP%` at
+  every launch, and managed PCs commonly forbid executing anything from there.
+- **A console build, not a windowed one.** With no arguments it still opens the
+  GUI, so double-clicking works — but a console build can be driven from a
+  command line and, more importantly, *shows its errors*. A windowed build
+  swallows them, which is the last thing you want on a locked-down PC.
+
+Be aware the .exe is **unsigned**. SmartScreen warns on first run
+("자세히" → "실행"), and some corporate antivirus quarantines PyInstaller
+output as a false positive. **Where Python can be installed, the `.bat` route
+is the more reliable one.**
 
 ---
 

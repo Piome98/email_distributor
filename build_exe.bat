@@ -30,7 +30,13 @@ echo.
 
 echo [2/3] Building. This takes a few minutes...
 echo.
-%PYRUN% -m PyInstaller --noconfirm --clean --onedir --windowed ^
+rem Built from cli.py as a console app, not from run.pyw as a windowed one.
+rem With no arguments cli.py opens the GUI, so a single executable still
+rem double-clicks into the app - but it can also be driven from a command
+rem line ("EmailDistributor.exe learn"), which is the only way to check that
+rem the Outlook COM layer survived bundling. A windowed build hides every
+rem error it hits, which is the last thing you want on a locked-down PC.
+%PYRUN% -m PyInstaller --noconfirm --clean --onedir --console ^
   --name EmailDistributor ^
   --paths src ^
   --collect-submodules email_distributor ^
@@ -38,7 +44,7 @@ echo.
   --hidden-import win32com.client ^
   --hidden-import pythoncom ^
   --hidden-import pywintypes ^
-  run.pyw
+  cli.py
 if errorlevel 1 goto :build_failed
 echo.
 
@@ -49,6 +55,14 @@ echo   Built: dist\EmailDistributor\EmailDistributor.exe
 echo.
 echo   Copy the WHOLE "dist\EmailDistributor" folder to the other PC
 echo   and run EmailDistributor.exe inside it.
+echo.
+echo   Double-click it        - opens the app
+echo   ...exe status          - what the database knows
+echo   ...exe learn           - build the database (read-only)
+echo   ...exe run             - dry run, changes nothing
+echo.
+echo   A console window stays open behind the app. That is deliberate:
+echo   it is where errors appear if the PC blocks something.
 echo.
 echo   Note: the .exe is unsigned. SmartScreen will warn on first run
 echo   ("More info" -^> "Run anyway"), and some corporate antivirus

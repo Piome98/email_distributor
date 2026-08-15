@@ -24,6 +24,37 @@ from .rules.engine import RuleSet
 from .service.watcher import Watcher
 
 
+def configure_console() -> None:
+    """Make the console able to print Korean, however we were launched.
+
+    The batch files set PYTHONIOENCODING and run `chcp 65001`, but a
+    double-clicked .exe inherits neither: it lands in whatever codepage the
+    console happens to use (949 on a Korean Windows), and every 회사 name comes
+    out as mojibake. Fixing it here means the program is correct on its own
+    rather than only when launched through a wrapper.
+    """
+    try:
+        import ctypes
+
+        # 65001 is UTF-8. Only affects this console, not the system.
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+        ctypes.windll.kernel32.SetConsoleCP(65001)
+    except Exception:  # noqa: BLE001 - no console (pythonw), or not Windows
+        pass
+
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            # errors="replace" so an unprintable character degrades to "?"
+            # instead of killing the run with a UnicodeEncodeError.
+            reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def setup_logging(verbose: bool) -> None:
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
@@ -179,6 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_console()
     parser = build_parser()
     args = parser.parse_args(argv)
     setup_logging(args.verbose)
