@@ -33,11 +33,20 @@ Everything else it uses (SQLite, Tkinter, JSON) ships inside Python.
 pip install --user pywin32
 ```
 
-Then double-click **`run.pyw`**, or:
+That is the whole installation. Then, from the project folder, double-click
+**`run.pyw`** for the desktop app, or use the command line:
 
 ```bash
-python -m email_distributor
+python cli.py status
 ```
+
+Both launchers put `src/` on the path themselves, so nothing needs installing
+and `PYTHONPATH` never has to be set.
+
+> `python -m email_distributor` works **only** after `pip install --user -e .`
+> or with `PYTHONPATH=src`. Use `python cli.py` instead — it works from a
+> freshly opened terminal in a copied folder, which is the point of the
+> no-install design.
 
 ---
 
@@ -115,13 +124,30 @@ The shipped default: tag internal mail, file known companies under
 
 ## Command line
 
+Run these from the project folder:
+
 ```bash
-python -m email_distributor status      # what the database knows
-python -m email_distributor learn       # build the identity DB
-python -m email_distributor run         # preview one pass
-python -m email_distributor run --live  # actually apply it
-python -m email_distributor watch       # poll until Ctrl+C
+python cli.py status      # what the database knows
 ```
+
+```bash
+python cli.py learn       # build the identity DB from your mailbox
+```
+
+```bash
+python cli.py run         # preview one pass, changing nothing
+```
+
+```bash
+python cli.py run --live  # actually apply it
+```
+
+```bash
+python cli.py watch       # poll until Ctrl+C
+```
+
+After `pip install --user -e .` the same commands are available as
+`email-distributor status`, and `python -m email_distributor` starts working.
 
 ---
 
@@ -170,7 +196,7 @@ numbers read from your mailbox. It is **git-ignored** and never leaves the PC.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests
+python run_tests.py
 ```
 
 113 tests covering signature parsing, identity resolution, source precedence,

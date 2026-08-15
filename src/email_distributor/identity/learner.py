@@ -103,9 +103,11 @@ class LearnStats:
     folders: list[str] = field(default_factory=list)
 
     def describe(self) -> str:
+        # "new" is explicit because a re-scan of an already-learned mailbox
+        # correctly reports zero, which reads like a failure otherwise.
         text = (
             f"{self.mail_read} messages read from {len(self.folders)} folder(s); "
-            f"{self.people_seen} people, {self.companies_created} new companies, "
+            f"{self.people_seen} new people, {self.companies_created} new companies, "
             f"{self.signatures_parsed} signatures parsed"
         )
         if self.exchange_senders:

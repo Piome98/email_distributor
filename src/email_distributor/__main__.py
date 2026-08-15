@@ -68,8 +68,6 @@ def cmd_status(_args: argparse.Namespace) -> int:
 
 def cmd_learn(args: argparse.Namespace) -> int:
     settings = Settings.load()
-    if args.limit:
-        settings.learn_limit = args.limit
 
     def progress(folder: str, done: int, _total: int) -> None:
         print(f"  {folder}: {done} messages read", end="\r", flush=True)
@@ -82,8 +80,15 @@ def cmd_learn(args: argparse.Namespace) -> int:
                 settings.save()
                 print(f"Detected internal domain: {settings.internal_domains[0]}")
 
+        # Applied after any save, so a one-off --limit stays one-off. Setting
+        # it before would persist a throwaway value into settings.json and
+        # quietly cap every later run.
+        if args.limit:
+            settings.learn_limit = args.limit
+
         stats = Learner(client, store, settings).learn_all(progress=progress)
         print("\n" + stats.describe())
+        print(f"database now holds: {store.stats()}")
 
         if stats.unresolved_senders:
             print(
