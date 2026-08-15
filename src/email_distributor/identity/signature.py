@@ -61,6 +61,14 @@ DEPT_SUFFIXES = [
     "팀", "실", "부", "파트",
 ]
 
+# Korean organisations are layered: a division (본부/실/사업부) contains teams
+# (팀/파트). Splitting the suffixes lets a signature reading
+# "글로벌사업본부 해외영업팀" fill both levels instead of collapsing to one.
+DIVISION_SUFFIXES = [
+    "사업본부", "사업부문", "사업부", "본부", "부문", "연구소", "센터", "실", "부",
+]
+TEAM_SUFFIXES = ["팀", "파트", "그룹"]
+
 # Suffixes that mark a whole organisation rather than a unit inside one, so a
 # match ending in one of these is never a department.
 ORG_NOT_DEPT_SUFFIXES = ("재단", "법인", "공단", "공사", "협회", "조합", "학회")
@@ -94,8 +102,16 @@ RE_CORPORATE_FOOTER = re.compile(
 EN_DEPT_SUFFIXES = [
     "Business Unit", "Headquarters", "Laboratory", "Department", "Institute",
     "Division", "Team", "Group", "Center", "Centre", "Office", "Unit",
-    "Dept.", "Dept", "Lab", "HQ",
+    "Services", "Dept.", "Dept", "Lab", "HQ", "BU",
 ]
+
+# Split the same way as the Korean suffixes. In a global company footer
+# "Automotive BU" is the division and "Korea HR Services" the team.
+EN_DIVISION_SUFFIXES = [
+    "Business Unit", "Headquarters", "Laboratory", "Department", "Institute",
+    "Division", "Center", "Centre", "Office", "Dept.", "Dept", "Lab", "HQ", "BU",
+]
+EN_TEAM_SUFFIXES = ["Team", "Group", "Services", "Unit"]
 
 # Everyday words that happen to end in a single-character unit suffix such as
 # 부 or 과. Without this, prose like "첨부 파일" would be read as a department.
@@ -135,6 +151,29 @@ RE_EN_TITLE = re.compile(rf"\b({_EN_TITLE_ALT})\b", re.IGNORECASE)
 # "영업1팀", "글로벌사업본부", "R&D센터"
 RE_DEPT = re.compile(rf"([A-Za-z0-9가-힣&\.\-]{{1,20}}?(?:{_DEPT_ALT}))(?![가-힣])")
 
+_DIVISION_ALT = "|".join(re.escape(s) for s in DIVISION_SUFFIXES)
+_TEAM_ALT = "|".join(re.escape(s) for s in TEAM_SUFFIXES)
+
+RE_DIVISION = re.compile(
+    rf"([A-Za-z0-9가-힣&\.\-]{{1,20}}?(?:{_DIVISION_ALT}))(?![가-힣])"
+)
+RE_TEAM = re.compile(rf"([A-Za-z0-9가-힣&\.\-]{{1,20}}?(?:{_TEAM_ALT}))(?![가-힣])")
+
+
+def _en_unit_pattern(suffixes: list[str]) -> re.Pattern[str]:
+    return re.compile(
+        r"([A-Z][A-Za-z0-9&\.\-]*(?:[ \t]+[A-Z&][A-Za-z0-9&\.\-]*){0,3}[ \t]+"
+        rf"(?:{'|'.join(re.escape(s) for s in suffixes)}))\b"
+    )
+
+
+RE_EN_DIVISION = _en_unit_pattern(EN_DIVISION_SUFFIXES)
+RE_EN_TEAM = _en_unit_pattern(EN_TEAM_SUFFIXES)
+
+# Korean honorific verb endings that happen to close with 실 - "많으실",
+# "있으실", "하실". Without this they are read as a 실 organisational unit.
+RE_VERB_ENDING = re.compile(r"(?:으|하|되|주|시|가|오|보|받|드|계|리|르)실$")
+
 # "Overseas Sales Team", "R&D Division". The inner separators are explicitly
 # spaces and tabs rather than \s, which would match a newline and let the
 # pattern splice two unrelated lines into one bogus department.
@@ -144,8 +183,13 @@ RE_EN_DEPT = re.compile(
 )
 
 # A line that is nothing but a person's name: "John Smith", "Jane A. Doe".
+#
+# The optional comma matters more than it looks: Korean offices of global
+# companies sign as "Kim, Gyuree" or "Ji, Dong Jin". Without it those lines are
+# not recognised as names, the block is not treated as a personal signature,
+# and every organisational field is discarded.
 RE_EN_NAME_LINE = re.compile(
-    r"^[A-Z][a-zA-Z\-']+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-zA-Z\-']+){1,2}$"
+    r"^[A-Z][a-zA-Z\-']+,?(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-zA-Z\-']+){1,2}$"
 )
 
 # Korean sentence endings and courtesy phrases. A line containing one of these
@@ -282,7 +326,12 @@ class SignatureInfo:
 
     name: str = ""
     title: str = ""
+    # The most specific organisational unit found - kept for display and for
+    # rules written against {department}.
     department: str = ""
+    # The two levels separately, so mail can be filed 부서 > 파트 > 담당자.
+    division: str = ""   # 본부 / 실 / 사업부
+    team: str = ""       # 팀 / 파트
     company: str = ""
     phone: str = ""
     mobile: str = ""
@@ -379,9 +428,40 @@ def _looks_like_person_name(line: str) -> bool:
         return False
     if any(marker.lower() in line.lower() for marker in EN_COMPANY_MARKERS):
         return False
+    # A line that is itself an organisational unit is not a person, however
+    # much it resembles a three-part name: "The Google Team", "Korea HR
+    # Services".
+    if RE_EN_DIVISION.search(line) or RE_EN_TEAM.search(line):
+        return False
     return not any(
         len(token.strip(".")) >= 2 and token.strip(".").isupper()
         for token in line.split()
+    )
+
+
+def is_organisational_unit(candidate: str) -> bool:
+    """Public check that a stored 부서/파트 value is plausible.
+
+    Used by the store so a bad value from an older parser cannot survive
+    indefinitely: blanks never overwrite, so anything written once stays.
+    """
+    return _is_org_unit(candidate, DIVISION_SUFFIXES + TEAM_SUFFIXES)
+
+
+def _is_org_unit(candidate: str, suffixes: list[str]) -> bool:
+    """True when a match is a real organisational unit rather than a word.
+
+    "영업팀" is a team; a bare suffix like "팀" is not, and neither is an
+    everyday word that merely ends in one, nor an organisation in its own right
+    such as a 재단.
+    """
+    candidate = candidate.strip()
+    return (
+        len(candidate) >= 2
+        and candidate not in suffixes
+        and candidate not in DEPT_STOPWORDS
+        and not candidate.endswith(ORG_NOT_DEPT_SUFFIXES)
+        and not RE_VERB_ENDING.search(candidate)
     )
 
 
@@ -522,34 +602,51 @@ def parse(body: str, sender_name: str = "") -> SignatureInfo:
             if en_title:
                 info.title = en_title.group(1)
 
-    if not info.department:
-        # Address lines are skipped: a building named "한국지식재산센터" or a
-        # room named "수면실" ends in a unit suffix but is a place, not a team.
-        for line in sig_lines:
-            if _looks_like_address(line):
-                continue
-            dept = RE_DEPT.search(line)
-            if not dept:
-                continue
-            candidate = dept.group(1).strip()
-            # "영업팀" is a department; a bare suffix like "팀" is not, and
-            # neither is an everyday word that merely ends in one.
-            if (
-                len(candidate) >= 2
-                and candidate not in DEPT_SUFFIXES
-                and candidate not in DEPT_STOPWORDS
-                and not candidate.endswith(ORG_NOT_DEPT_SUFFIXES)
-            ):
-                info.department = candidate
-                break
-    if not info.department:
-        for line in sig_lines:
-            if _looks_like_address(line):
-                continue
-            en_dept = RE_EN_DEPT.search(line)
-            if en_dept:
-                info.department = en_dept.group(1).strip()
-                break
+    # Organisational units. Division and team are collected separately so mail
+    # can be filed 부서 > 파트 > 담당자 rather than into one flat level.
+    #
+    # Address lines are skipped: a building named "한국지식재산센터" or a room
+    # named "수면실" ends in a unit suffix but is a place, not a team.
+    for line in sig_lines:
+        if _looks_like_address(line):
+            continue
+        if not info.division:
+            found = RE_DIVISION.search(line)
+            if found and _is_org_unit(found.group(1), DIVISION_SUFFIXES):
+                info.division = found.group(1).strip()
+        if not info.team:
+            found = RE_TEAM.search(line)
+            if found and _is_org_unit(found.group(1), TEAM_SUFFIXES):
+                info.team = found.group(1).strip()
+        if info.division and info.team:
+            break
+
+    # Latin-script footers, which is what a global company's Korean office
+    # actually sends: "Automotive BU", "Korea HR Services".
+    for line in sig_lines:
+        if info.division and info.team:
+            break
+        if _looks_like_address(line) or RE_EMAIL.search(line):
+            continue
+        if not info.division:
+            found = RE_EN_DIVISION.search(line)
+            if found:
+                info.division = found.group(1).strip()
+        if not info.team:
+            found = RE_EN_TEAM.search(line)
+            if found:
+                info.team = found.group(1).strip()
+
+    # A label such as "부서 : 해외영업팀" is authoritative but unclassified, so
+    # sort it onto the level its own suffix implies.
+    if info.department and not (info.division or info.team):
+        if info.department.endswith(tuple(TEAM_SUFFIXES)):
+            info.team = info.department
+        else:
+            info.division = info.department
+
+    # The most specific unit is what people mean by "부서" in a contact list.
+    info.department = info.department or info.team or info.division
 
     # Company detection sees the short signature lines plus any long line that
     # carries statutory footer details - a real footer often packs the company,
@@ -561,7 +658,11 @@ def parse(body: str, sender_name: str = "") -> SignatureInfo:
             [l for l in lines if len(l) <= 70 or RE_CORPORATE_FOOTER.search(l)]
         )
 
-    phone, mobile = _extract_phones(blob)
+    # Phone numbers are read from every line, not just the short ones. A
+    # contact line packing "TEL ... MOBILE ... EMAIL ..." onto one row is
+    # normal and easily exceeds the length filter; the number patterns are
+    # distinctive enough not to need the prose guard.
+    phone, mobile = _extract_phones("\n".join(lines))
     info.phone = info.phone or phone
     info.mobile = info.mobile or mobile
 
@@ -577,17 +678,12 @@ def parse(body: str, sender_name: str = "") -> SignatureInfo:
         if email:
             info.email = email.group(0).lower()
 
-    # Bulk and marketing mail has no personal signature, but it does have
-    # plenty of capitalised prose that these patterns will happily mistake for
-    # a job title or a department. Require some positive evidence that a real
-    # individual signed off - a name-with-rank, or a contact number - before
-    # attributing person-level fields to anybody.
-    if not (RE_KO_NAME_TITLE.search(blob) or info.mobile or info.phone):
-        info.title = ""
-        info.department = ""
-
     if not info.name:
         # A Latin-script name sits on a line of its own, above the job title.
+        # This runs before the evidence check below, because finding a name is
+        # itself the strongest evidence that a person signed off - and a global
+        # company's footer ("Kim, Gyuree" / "Automotive BU") often carries no
+        # Korean rank at all.
         for line in sig_lines:
             if line == info.company or RE_EMAIL.search(line):
                 continue
@@ -595,6 +691,21 @@ def parse(body: str, sender_name: str = "") -> SignatureInfo:
                 info.name = line
                 info.personal = True
                 break
+
+    # Bulk and marketing mail has no personal signature, but it does have
+    # plenty of capitalised prose that these patterns will happily mistake for
+    # a job title or a department. Require positive evidence that a real
+    # individual signed off - a name-with-rank, or a contact number - before
+    # attributing person-level fields to anybody.
+    #
+    # A bare Latin name line is deliberately NOT accepted as that evidence: it
+    # is a weak signal that also fires on "Browse Catalog" in a newsletter
+    # footer. A real sign-off almost always carries a number as well.
+    if not (RE_KO_NAME_TITLE.search(blob) or info.mobile or info.phone):
+        info.title = ""
+        info.department = ""
+        info.division = ""
+        info.team = ""
 
     if not info.name:
         # Outlook's display name is often "홍길동" or "홍길동 부장".
@@ -606,8 +717,8 @@ def parse(body: str, sender_name: str = "") -> SignatureInfo:
         else:
             info.name = fallback
 
-    for field_name in ("name", "title", "department", "company", "phone",
-                       "mobile", "fax", "address", "website"):
+    for field_name in ("name", "title", "department", "division", "team",
+                       "company", "phone", "mobile", "fax", "address", "website"):
         setattr(info, field_name, _clean_field(getattr(info, field_name)))
     info.address = info.address[:120]
     return info

@@ -137,6 +137,94 @@ class TestBulkMailIsNotAPerson(unittest.TestCase):
         self.assertEqual(info.department, "Overseas Sales Team")
 
 
+class TestOrganisationLevels(unittest.TestCase):
+    """부서(본부/실) and 파트(팀) are read separately so internal mail can be
+    filed 부서 > 파트 > 담당자 rather than into one flat level."""
+
+    def test_both_levels_from_one_line(self):
+        info = signature.parse("홍길동 부장 / 글로벌사업본부 해외영업팀\nM. 010-1-1")
+        self.assertEqual(info.division, "글로벌사업본부")
+        self.assertEqual(info.team, "해외영업팀")
+
+    def test_both_levels_across_separate_lines(self):
+        info = signature.parse("김철수 과장\n영업본부\n영업1팀\n(주)한국전자\nM. 010-1-1")
+        self.assertEqual(info.division, "영업본부")
+        self.assertEqual(info.team, "영업1팀")
+
+    def test_team_only(self):
+        info = signature.parse("이영희 대리 / 구매팀\n㈜미래상사\nM. 010-1-1")
+        self.assertEqual(info.team, "구매팀")
+        self.assertEqual(info.division, "")
+
+    def test_division_only(self):
+        info = signature.parse("박서준 차장\n기술연구소\n(주)테스트\nM. 010-1-1")
+        self.assertEqual(info.division, "기술연구소")
+        self.assertEqual(info.team, "")
+
+    def test_department_is_the_most_specific_level(self):
+        info = signature.parse("홍길동 부장 / 글로벌사업본부 해외영업팀\nM. 010-1-1")
+        self.assertEqual(info.department, "해외영업팀")
+
+    def test_a_labelled_department_is_sorted_onto_its_level(self):
+        team = signature.parse("부서 : 해외영업팀\n홍길동 부장\nM. 010-1-1")
+        self.assertEqual(team.team, "해외영업팀")
+        division = signature.parse("부서 : 영업본부\n홍길동 부장\nM. 010-1-1")
+        self.assertEqual(division.division, "영업본부")
+
+    def test_an_address_line_supplies_neither_level(self):
+        info = signature.parse(
+            "김철수 대리\n서울특별시 강남구 테헤란로 000, 00층 (역삼동, 한국지식재산센터)\n"
+            "M. 010-1111-2222"
+        )
+        self.assertEqual(info.division, "")
+        self.assertEqual(info.team, "")
+
+    def test_global_company_footer(self):
+        """The shape a multinational's Korean office actually sends."""
+        info = signature.parse(
+            "Best Regards,\nKim, Gyuree\nHR Business Partner\n"
+            "Automotive BU, TE Connectivity Korea\n"
+            "TEL +82 31 000 0000 MOBILE +82 10 0000 0000"
+        )
+        self.assertEqual(info.division, "Automotive BU")
+
+    def test_contact_line_too_long_for_the_prose_filter_still_counts(self):
+        """The exact shape that silently wiped every field.
+
+        A one-row "TEL ... MOBILE ... EMAIL ..." line exceeds the length
+        filter, so no phone was found; the Latin name was only recognised
+        after the evidence check, so the block looked like bulk mail and its
+        organisational fields were discarded.
+        """
+        info = signature.parse(
+            "안녕하세요. 아래와 같이 안내드립니다.\n"
+            "Best Regards,\nKim, Gyuree\nHR Business Partner\n"
+            "Automotive BU, TE Connectivity Korea\n"
+            "TEL +82 31 710 0000 MOBILE +82 10 1234 5678 "
+            "EMAIL gkim@te.com <mailto:gkim@te.com>"
+        )
+        self.assertTrue(info.personal)
+        self.assertEqual(info.division, "Automotive BU")
+        self.assertEqual(info.name, "Kim, Gyuree")
+
+    def test_english_team_suffix(self):
+        info = signature.parse(
+            "Kind Regards,\nKorea HR Services\nTEL +82 31 000 0000"
+        )
+        self.assertEqual(info.team, "Korea HR Services")
+
+    def test_honorific_verb_ending_is_not_a_unit(self):
+        """"많으실" and "있으실" close with 실 but are verb endings."""
+        for phrase in ("문의가 많으실 경우", "궁금한 점이 있으실 때"):
+            info = signature.parse(f"홍길동 부장\n{phrase}\n(주)테스트\nM. 010-1-1")
+            self.assertEqual(info.division, "", phrase)
+
+    def test_bulk_mail_yields_no_levels(self):
+        info = signature.parse("Newsletter\nThe Google Team\nUnsubscribe")
+        self.assertEqual(info.division, "")
+        self.assertEqual(info.team, "")
+
+
 class TestLabelledFields(unittest.TestCase):
     """Korean corporate footers label their fields; reading the label beats
     guessing from position. These blocks are modelled on real mail."""

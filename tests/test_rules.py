@@ -49,8 +49,18 @@ class TestSanitize(unittest.TestCase):
     def test_illegal_characters_replaced(self):
         self.assertEqual(sanitize_folder_name('a/b\\c:d*e?f"g<h>i|j'), "a-b-c-d-e-f-g-h-i-j")
 
-    def test_empty_name_gets_a_fallback(self):
-        self.assertEqual(sanitize_folder_name("..."), "기타")
+    def test_a_name_that_survives_as_nothing_is_empty(self):
+        """Empty means "drop this level", which is what lets optional path
+        segments collapse instead of becoming placeholder folders."""
+        self.assertEqual(sanitize_folder_name("..."), "")
+
+    def test_empty_segments_are_dropped_from_a_path(self):
+        self.assertEqual(sanitize_folder_path("Inbox/사내//영업1팀/"), "Inbox/사내/영업1팀")
+
+    def test_a_company_still_gets_its_fallback(self):
+        """The fallback belongs to the placeholder, not the sanitizer."""
+        identity = Identity(email="x@y.com", domain="y.com")
+        self.assertEqual(expand("{company}", make_message(), identity), "기타")
 
     def test_path_separators_survive_sanitising(self):
         self.assertEqual(
@@ -214,13 +224,29 @@ class TestDefaultRuleset(unittest.TestCase):
         self.assertEqual(decision.move_to, "")
         self.assertEqual(decision.categories, ["미분류"])
 
-    def test_internal_mail_goes_to_a_per_colleague_folder(self):
-        """사내/{담당자} - no company level, since there is only one company."""
-        decision = default_ruleset().evaluate(
-            make_message(), make_identity(is_internal=True, display_name="홍길동")
+    def _internal(self, **person_kw):
+        person = Person(email="hong@mycorp.co.kr", **person_kw) if person_kw else None
+        identity = make_identity(
+            is_internal=True, display_name="홍길동", person=person
         )
-        self.assertEqual(decision.move_to, "Inbox/사내/홍길동")
+        return default_ruleset().evaluate(make_message(), identity)
+
+    def test_internal_mail_is_filed_by_division_then_team_then_person(self):
+        decision = self._internal(division="영업본부", team="영업1팀")
+        self.assertEqual(decision.move_to, "Inbox/사내/영업본부/영업1팀/홍길동")
         self.assertIn("사내", decision.categories)
+
+    def test_a_missing_division_collapses_away(self):
+        decision = self._internal(team="영업1팀")
+        self.assertEqual(decision.move_to, "Inbox/사내/영업1팀/홍길동")
+
+    def test_a_missing_team_collapses_away(self):
+        decision = self._internal(division="영업본부")
+        self.assertEqual(decision.move_to, "Inbox/사내/영업본부/홍길동")
+
+    def test_no_organisational_detail_leaves_just_the_person(self):
+        """No placeholder folders: better a flat 사내/홍길동 than 사내/기타/기타."""
+        self.assertEqual(self._internal().move_to, "Inbox/사내/홍길동")
 
     def test_internal_is_claimed_before_the_company_rules(self):
         """A colleague must never be filed as an external 거래처."""

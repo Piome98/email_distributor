@@ -57,6 +57,8 @@ class Person:
     display_name: str = ""
     company_id: Optional[int] = None
     department: str = ""
+    division: str = ""   # 본부 / 실 / 사업부
+    team: str = ""       # 팀 / 파트
     title: str = ""
     phone: str = ""
     mobile: str = ""

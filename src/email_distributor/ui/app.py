@@ -268,16 +268,18 @@ class App(tk.Tk):
         entry.pack(side="left")
         entry.bind("<KeyRelease>", lambda _e: self._refresh_people())
 
-        columns = ("email", "name", "title", "dept", "company", "contact", "address", "count")
+        columns = ("email", "name", "title", "division", "team", "company",
+                   "contact", "address", "count")
         self.tree_people = ttk.Treeview(frame, columns=columns, show="headings")
         for col, text, width in (
-            ("email", "이메일", 210),
-            ("name", "이름", 90),
-            ("title", "직급", 70),
-            ("dept", "부서", 120),
-            ("company", "회사", 150),
-            ("contact", "연락처", 120),
-            ("address", "주소", 230),
+            ("email", "이메일", 200),
+            ("name", "이름", 85),
+            ("title", "직급", 65),
+            ("division", "부서", 110),
+            ("team", "파트", 110),
+            ("company", "회사", 140),
+            ("contact", "연락처", 110),
+            ("address", "주소", 190),
             ("count", "메일 수", 60),
         ):
             self.tree_people.heading(col, text=text)
@@ -585,7 +587,10 @@ class App(tk.Tk):
         for person in self.store.list_people():
             company = companies.get(person.company_id, "")
             haystack = " ".join(
-                [person.email, person.display_name, person.department, company]
+                [
+                    person.email, person.display_name, person.department,
+                    person.division, person.team, company,
+                ]
             ).lower()
             if needle and needle not in haystack:
                 continue
@@ -596,7 +601,8 @@ class App(tk.Tk):
                     person.email,
                     person.display_name,
                     person.title,
-                    person.department,
+                    person.division,
+                    person.team,
                     company,
                     person.mobile or person.phone,
                     person.address,

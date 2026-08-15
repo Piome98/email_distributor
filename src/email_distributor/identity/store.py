@@ -59,6 +59,10 @@ CREATE TABLE IF NOT EXISTS people (
     display_name  TEXT NOT NULL DEFAULT '',
     company_id    INTEGER REFERENCES companies(id) ON DELETE SET NULL,
     department    TEXT NOT NULL DEFAULT '',
+    -- The two organisational levels, so internal mail can be filed
+    -- 부서 > 파트 > 담당자 instead of one flat level.
+    division      TEXT NOT NULL DEFAULT '',
+    team          TEXT NOT NULL DEFAULT '',
     title         TEXT NOT NULL DEFAULT '',
     phone         TEXT NOT NULL DEFAULT '',
     mobile        TEXT NOT NULL DEFAULT '',
@@ -120,6 +124,8 @@ class IdentityStore:
             ("people", "fax", "TEXT NOT NULL DEFAULT ''"),
             ("people", "address", "TEXT NOT NULL DEFAULT ''"),
             ("people", "sent_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("people", "division", "TEXT NOT NULL DEFAULT ''"),
+            ("people", "team", "TEXT NOT NULL DEFAULT ''"),
         )
         for table, column, declaration in additions:
             existing = {
@@ -319,6 +325,8 @@ class IdentityStore:
         display_name: str = "",
         company_id: Optional[int] = None,
         department: str = "",
+        division: str = "",
+        team: str = "",
         title: str = "",
         phone: str = "",
         mobile: str = "",
@@ -333,6 +341,16 @@ class IdentityStore:
         if not email or "@" not in email:
             return None
 
+        # Validated at the boundary rather than trusted from the caller. A
+        # value that fails here would otherwise be stored once and then live
+        # forever, because a later blank never overwrites a stored value.
+        from . import signature as _sig
+
+        if division and not _sig.is_organisational_unit(division):
+            division = ""
+        if team and not _sig.is_organisational_unit(team):
+            team = ""
+
         row = self.conn.execute(
             "SELECT * FROM people WHERE email = ?", (email,)
         ).fetchone()
@@ -341,14 +359,14 @@ class IdentityStore:
         if row is None:
             cur = self.conn.execute(
                 """INSERT INTO people
-                       (email, display_name, company_id, department, title, phone,
-                        mobile, fax, address, source, message_count, sent_count,
-                        first_seen, last_seen)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       (email, display_name, company_id, department, division,
+                        team, title, phone, mobile, fax, address, source,
+                        message_count, sent_count, first_seen, last_seen)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    email, display_name, company_id, department, title, phone,
-                    mobile, fax, address, source, 1 if bump_count else 0,
-                    1 if bump_sent else 0, stamp, stamp,
+                    email, display_name, company_id, department, division, team,
+                    title, phone, mobile, fax, address, source,
+                    1 if bump_count else 0, 1 if bump_sent else 0, stamp, stamp,
                 ),
             )
             self.conn.commit()
@@ -368,6 +386,8 @@ class IdentityStore:
                       SET display_name  = CASE WHEN ? <> '' THEN ? ELSE display_name END,
                           company_id    = COALESCE(?, company_id),
                           department    = CASE WHEN ? <> '' THEN ? ELSE department END,
+                          division      = CASE WHEN ? <> '' THEN ? ELSE division END,
+                          team          = CASE WHEN ? <> '' THEN ? ELSE team END,
                           title         = CASE WHEN ? <> '' THEN ? ELSE title END,
                           phone         = CASE WHEN ? <> '' THEN ? ELSE phone END,
                           mobile        = CASE WHEN ? <> '' THEN ? ELSE mobile END,
@@ -381,7 +401,8 @@ class IdentityStore:
                     WHERE id = ?""",
                 (
                     display_name, display_name, company_id,
-                    department, department, title, title,
+                    department, department, division, division, team, team,
+                    title, title,
                     phone, phone, mobile, mobile,
                     fax, fax, address, address,
                     source, count, sent, first_seen, last_seen, row["id"],
@@ -410,6 +431,8 @@ class IdentityStore:
             display_name=row["display_name"],
             company_id=row["company_id"],
             department=row["department"],
+            division=row["division"],
+            team=row["team"],
             title=row["title"],
             phone=row["phone"],
             mobile=row["mobile"],

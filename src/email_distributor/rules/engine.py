@@ -27,16 +27,27 @@ RE_ILLEGAL_FOLDER_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 
 
 def sanitize_folder_name(name: str) -> str:
-    """Make a string safe to use as a single Outlook folder name."""
+    """Make a string safe to use as a single Outlook folder name.
+
+    Returns "" for anything that survives as nothing. Callers that need a
+    folder regardless - a company, say - supply their own fallback; callers
+    with optional levels rely on the empty result being dropped.
+    """
     cleaned = RE_ILLEGAL_FOLDER_CHARS.sub("-", name).strip(" .")
     cleaned = re.sub(r"\s{2,}", " ", cleaned)
-    return cleaned[:100] or "기타"
+    return cleaned[:100]
 
 
 def sanitize_folder_path(path: str) -> str:
-    """Sanitize each segment of a folder path, preserving the separators."""
+    """Sanitize each segment of a folder path, dropping empty ones.
+
+    Dropping empties is what makes optional levels work: a template of
+    "사내/{division}/{team}/{person}" yields "사내/영업본부/영업1팀/홍길동" when
+    the signature gave everything, and "사내/홍길동" when it gave nothing -
+    instead of a tree full of placeholder folders.
+    """
     parts = [p for p in path.replace("\\", "/").split("/") if p.strip()]
-    return "/".join(sanitize_folder_name(p) for p in parts)
+    return "/".join(p for p in (sanitize_folder_name(x) for x in parts) if p)
 
 
 def expand(
@@ -58,7 +69,14 @@ def expand(
         "person": (identity.display_name or identity.email.split("@")[0] or "unknown"),
         "email": identity.email,
         "domain": identity.domain or "unknown",
-        "department": (person.department if person and person.department else "기타"),
+        # Organisational levels resolve to empty when unknown, and an empty
+        # path segment is dropped rather than becoming a "기타" folder. That is
+        # what lets "사내/{division}/{team}/{person}" collapse gracefully to
+        # "사내/영업1팀/홍길동", or to "사내/홍길동", depending on what the
+        # signature actually revealed.
+        "department": (person.department if person else ""),
+        "division": (person.division if person else ""),
+        "team": (person.team if person else ""),
         "title": (person.title if person and person.title else ""),
         "year": now.strftime("%Y"),
         "month": now.strftime("%m"),
@@ -207,7 +225,7 @@ class Decision:
 # Bumped whenever the shipped default rules change in a way that matters.
 # A saved file carrying an older version is regenerated - but only if the user
 # never edited it. See RuleSet.load.
-RULESET_VERSION = 4
+RULESET_VERSION = 5
 
 
 class RuleSet:
@@ -374,9 +392,14 @@ def default_ruleset() -> RuleSet:
     """A safe, useful starting point.
 
     Ordering matters: internal mail is claimed first so colleagues never end up
-    filed as an external company. It goes to 사내/{담당자}, mirroring the
-    거래처/{업체}/{담당자} shape - one folder per colleague, no company level,
-    because there is only ever one company.
+    filed as an external company. It goes to 사내/{부서}/{파트}/{담당자}, read
+    off the signature block - there is no company level because internally
+    there is only ever one company.
+
+    Levels the signature did not reveal collapse away, so a colleague whose
+    footer names only a team lands in 사내/{파트}/{이름}, and one with no
+    organisational detail at all in 사내/{이름}. No placeholder folders are
+    ever created.
 
     Confirmed 거래처 are then filed under 거래처/{업체}/{담당자}.
 
@@ -407,7 +430,7 @@ def default_ruleset() -> RuleSet:
                 name="사내 메일 (internal)",
                 match=Match(is_internal=True),
                 actions=Actions(
-                    move_to="Inbox/사내/{person}",
+                    move_to="Inbox/사내/{division}/{team}/{person}",
                     categories=["사내"],
                 ),
             ),

@@ -268,6 +268,8 @@ class Learner:
             ),
             company_id=company_id,
             department=(person_fields.department if person_fields else ""),
+            division=(person_fields.division if person_fields else ""),
+            team=(person_fields.team if person_fields else ""),
             title=(person_fields.title if person_fields else ""),
             phone=(person_fields.phone if person_fields else ""),
             mobile=(person_fields.mobile if person_fields else ""),
