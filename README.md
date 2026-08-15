@@ -173,6 +173,10 @@ python cli.py learn       # build the identity DB from your mailbox
 ```
 
 ```bash
+python cli.py report      # scan EVERY message and say why each isn't filed
+```
+
+```bash
 python cli.py run         # preview one pass, changing nothing
 ```
 
@@ -186,6 +190,11 @@ python cli.py watch       # poll until Ctrl+C
 
 After `pip install --user -e .` the same commands are available as
 `email-distributor status`, and `python -m email_distributor` starts working.
+
+> `run` examines the newest **200** messages by default. On a large mailbox
+> that leaves most of it untouched, and "nothing is moving" looks identical to
+> "nothing in the first 200 was eligible". Pass `--limit 0` for every message,
+> and use `report` to see the whole picture at once.
 
 ---
 

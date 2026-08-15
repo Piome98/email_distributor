@@ -338,8 +338,16 @@ class OutlookClient:
                 out.append(str(addr).lower())
         return out
 
-    def read_item(self, item: Any, folder_path: str = "") -> Optional[Message]:
-        """Snapshot one COM item into a `Message`, or None if unusable."""
+    def read_item(
+        self, item: Any, folder_path: str = "", with_body: bool = True
+    ) -> Optional[Message]:
+        """Snapshot one COM item into a `Message`, or None if unusable.
+
+        `with_body=False` skips the message body, which is by far the most
+        expensive property to read over COM. Callers that only need to know who
+        sent something - a report over thousands of messages, say - are several
+        times faster without it.
+        """
         if int(_safe(lambda: item.Class, 0) or 0) != OL_MAIL_ITEM:
             return None  # calendar invite, delivery report, note, ...
 
@@ -355,7 +363,7 @@ class OutlookClient:
         return Message(
             entry_id=str(_safe(lambda: item.EntryID)),
             subject=str(_safe(lambda: item.Subject)),
-            body=str(_safe(lambda: item.Body)),
+            body=str(_safe(lambda: item.Body)) if with_body else "",
             sender_email=self.resolve_sender_smtp(item),
             sender_name=str(_safe(lambda: item.SenderName)),
             sender_type=str(_safe(lambda: item.SenderEmailType)).upper(),
@@ -375,11 +383,16 @@ class OutlookClient:
         limit: int = 500,
         unread_only: bool = False,
         newest_first: bool = True,
+        with_body: bool = True,
     ) -> Iterator[tuple[Any, Message]]:
         """Yield (com_item, snapshot) pairs from a folder.
 
         The COM item comes along so callers can act on it (move, categorise)
         without a second lookup by EntryID.
+
+        A `limit` of 0 or less means "every message in the folder". A capped
+        run only ever sees the newest slice, which silently leaves the rest of
+        a large mailbox untouched.
         """
         items = _safe(lambda: folder.Items, None)
         if items is None:
@@ -405,13 +418,14 @@ class OutlookClient:
         except (TypeError, ValueError):
             return
 
+        unlimited = limit <= 0
         for i in range(1, total + 1):
-            if count >= limit:
+            if not unlimited and count >= limit:
                 return
             item = _safe(lambda i=i: items.Item(i), None)
             if item is None:
                 continue
-            snapshot = self.read_item(item, path)
+            snapshot = self.read_item(item, path, with_body=with_body)
             if snapshot is None:
                 continue
             count += 1

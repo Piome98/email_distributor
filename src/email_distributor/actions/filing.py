@@ -274,10 +274,12 @@ class Distributor:
         """
         combined = RunSummary(dry_run=self.settings.dry_run)
 
+        unlimited = limit <= 0
+
         def walk(current: Any) -> None:
-            if len(combined.results) >= limit:
+            if not unlimited and len(combined.results) >= limit:
                 return
-            remaining = limit - len(combined.results)
+            remaining = 0 if unlimited else limit - len(combined.results)
             summary = self.process_folder(
                 current, limit=remaining, reprocess=reprocess, on_result=on_result
             )

@@ -17,6 +17,7 @@ import time
 
 from .actions.filing import Distributor
 from .actions.folders import FolderBuilder
+from .actions.report import REASON_ORDER, InboxReport
 from .config import PUBLIC_DOMAINS, Settings, data_dir, log_path, rules_path
 from .identity.learner import Learner
 from .identity.models import SOURCE_MANUAL
@@ -218,6 +219,55 @@ def cmd_folders(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    settings = Settings.load()
+
+    with OutlookClient() as client, IdentityStore() as store:
+        folder = client.get_folder(args.folder or settings.watch_folder)
+        if folder is None:
+            print(f"Folder not found: {args.folder or settings.watch_folder!r}")
+            return 4
+
+        print(f"Scanning '{args.folder or settings.watch_folder}' - every message.\n")
+        reporter = InboxReport(client, store, RuleSet.load(), settings)
+        report = reporter.run(
+            folder,
+            limit=args.limit,
+            on_progress=lambda n: print(f"  {n} read...", end="\r", flush=True),
+        )
+
+        print(f"{report.examined} message(s) examined\n")
+        print("왜 이동되지 않는가 / why each message is where it is")
+        print("-" * 62)
+        for reason in REASON_ORDER:
+            count = report.reasons.get(reason, 0)
+            if count:
+                print(f"  {count:6}  {reason}")
+
+        if report.destinations:
+            print("\n이동될 위치 / where the movable mail would go")
+            print("-" * 62)
+            for path, n in report.destinations.most_common(10):
+                print(f"  {n:6}  {path}")
+
+        if report.blocked_by_company:
+            print("\n거래처로 지정하면 정리되는 메일 / confirm these to file the most")
+            print("-" * 62)
+            for name, n in report.blocked_by_company.most_common(args.top):
+                print(f"  {n:6}  {name}")
+            print(
+                f"\n  Confirm one with:  python cli.py group 고객사 "
+                f"--match \"<name>\" --live"
+            )
+
+        if report.unknown_domains:
+            print("\n회사를 알 수 없는 도메인 / senders matched to no company")
+            print("-" * 62)
+            for domain, n in report.unknown_domains.most_common(10):
+                print(f"  {n:6}  {domain}")
+    return 0
+
+
 def cmd_group(args: argparse.Namespace) -> int:
     """Confirm companies as 거래처 in bulk.
 
@@ -295,6 +345,14 @@ def build_parser() -> argparse.ArgumentParser:
     learn.add_argument("--limit", type=int, default=0, help="max messages per folder")
     learn.set_defaults(func=cmd_learn)
 
+    report = sub.add_parser(
+        "report", help="scan every message and say why each one is not filed"
+    )
+    report.add_argument("--folder", default="", help="folder to scan (default: watch folder)")
+    report.add_argument("--limit", type=int, default=0, help="0 = every message")
+    report.add_argument("--top", type=int, default=20, help="how many companies to list")
+    report.set_defaults(func=cmd_report)
+
     group = sub.add_parser(
         "group", help="confirm companies as 거래처 in bulk (only these get filed)"
     )
@@ -332,7 +390,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--live", action="store_true", help="actually apply changes (default: dry run)"
     )
-    run.add_argument("--limit", type=int, default=200, help="max messages to examine")
+    run.add_argument(
+        "--limit",
+        type=int,
+        default=200,
+        help="max messages to examine; 0 = every message in the folder",
+    )
     run.add_argument(
         "--folder", default="", help="file this folder instead of the watch folder"
     )
