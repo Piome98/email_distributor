@@ -105,6 +105,13 @@ class TestMatch(unittest.TestCase):
         self.assertTrue(Match(importance_min=2).matches(message, make_identity()))
         self.assertFalse(Match(importance_min=2).matches(make_message(), make_identity()))
 
+    def test_has_group_distinguishes_confirmed_companies(self):
+        grouped = make_identity()
+        ungrouped = make_identity(company=Company(name="Reddit", group_name=""))
+        self.assertTrue(Match(has_group=True).matches(make_message(), grouped))
+        self.assertFalse(Match(has_group=True).matches(make_message(), ungrouped))
+        self.assertTrue(Match(has_group=False).matches(make_message(), ungrouped))
+
     def test_false_conditions_are_tested_not_ignored(self):
         """`is_internal=False` must be a real test, not treated as 'unset'."""
         internal = make_identity(is_internal=True)
@@ -173,15 +180,41 @@ class TestDefaultRuleset(unittest.TestCase):
         self.assertEqual(decision.rule_names, ["사내 메일 (internal)"])
         self.assertEqual(decision.move_to, "")  # colleagues are tagged, not moved
 
-    def test_known_company_is_filed_by_group(self):
-        decision = default_ruleset().evaluate(make_message(), make_identity())
-        self.assertEqual(decision.move_to, "Inbox/거래처/고객사/한국전자")
+    def test_grouped_company_is_filed_under_company_then_contact(self):
+        """거래처/담당자: one folder per company, one per contact inside it."""
+        identity = make_identity(display_name="홍길동")
+        decision = default_ruleset().evaluate(make_message(), identity)
+        self.assertEqual(decision.move_to, "Inbox/거래처/한국전자/홍길동")
         self.assertIn("한국전자", decision.categories)
 
-    def test_unknown_sender_is_set_aside(self):
+    def test_contact_without_a_display_name_uses_the_mailbox_name(self):
+        identity = make_identity(display_name="")
+        decision = default_ruleset().evaluate(make_message(), identity)
+        self.assertEqual(decision.move_to, "Inbox/거래처/한국전자/hong")
+
+    def test_company_without_a_group_is_left_in_the_inbox(self):
+        """The decisive rule.
+
+        The learner invents a company for every domain it meets, newsletters
+        included. Only a company the user has put into a group counts as a
+        confirmed 거래처; everything else stays put to be sorted by hand.
+        """
+        ungrouped = make_identity(company=Company(name="Instagram", group_name=""))
+        decision = default_ruleset().evaluate(make_message(), ungrouped)
+        self.assertEqual(decision.move_to, "")
+        self.assertEqual(decision.categories, ["미분류"])
+
+    def test_unknown_sender_stays_in_the_inbox(self):
         unknown = Identity(email="x@nowhere.kr", domain="nowhere.kr")
         decision = default_ruleset().evaluate(make_message(), unknown)
-        self.assertEqual(decision.move_to, "Inbox/거래처/_미분류")
+        self.assertEqual(decision.move_to, "")
+        self.assertEqual(decision.categories, ["미분류"])
+
+    def test_internal_mail_is_tagged_but_never_moved(self):
+        decision = default_ruleset().evaluate(
+            make_message(), make_identity(is_internal=True)
+        )
+        self.assertEqual(decision.move_to, "")
 
 
 class TestPersistence(unittest.TestCase):

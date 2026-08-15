@@ -222,6 +222,42 @@ class OutlookClient:
     def folder_path(self, folder: Any) -> str:
         return str(_safe(lambda: folder.FolderPath, ""))
 
+    def store_info(self, folder: Any = None) -> dict[str, Any]:
+        """Describe the store a folder lives in, and whether it syncs.
+
+        This matters for folder creation: a folder made inside a local .pst
+        exists only on this PC. It will not appear on the web client, on a
+        phone, or after the machine is rebuilt - which is not what anyone means
+        by "make the folders in Outlook". Exchange (.ost) and IMAP stores both
+        sync to the server; a .pst does not.
+        """
+        folder = folder if folder is not None else self._root()
+        store = _safe(lambda: folder.Store, None)
+        if store is None:
+            return {"name": "?", "path": "", "syncs": True, "kind": "unknown"}
+
+        path = str(_safe(lambda: store.FilePath, ""))
+        # olExchangeStoreType: 0 primary mailbox, 1 delegate, 2 public folder,
+        # 3 not Exchange (IMAP, POP or a standalone .pst).
+        exchange_type = _safe(lambda: store.ExchangeStoreType, 3)
+        is_pst = path.lower().endswith(".pst")
+
+        if is_pst:
+            kind = "local .pst - does NOT sync"
+        elif exchange_type in (0, 1):
+            kind = "Exchange mailbox - syncs"
+        elif path.lower().endswith(".ost"):
+            kind = "cached account (IMAP/Exchange) - syncs"
+        else:
+            kind = "account store - syncs"
+
+        return {
+            "name": str(_safe(lambda: store.DisplayName, "?")),
+            "path": path,
+            "syncs": not is_pst,
+            "kind": kind,
+        }
+
     def list_folder_tree(self, folder: Any = None, depth: int = 0) -> list[tuple[int, str]]:
         """Flat (depth, name) listing, for populating the UI's folder picker."""
         folder = folder if folder is not None else self._root()

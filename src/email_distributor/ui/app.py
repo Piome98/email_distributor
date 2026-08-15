@@ -23,6 +23,7 @@ from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from ..actions.filing import Distributor, RunSummary
+from ..actions.folders import FolderBuilder
 from ..config import Settings, data_dir, rules_path
 from ..identity.learner import Learner
 from ..identity.models import SOURCE_MANUAL
@@ -120,7 +121,35 @@ class App(tk.Tk):
             anchor="w", padx=8, pady=(0, 8)
         )
 
-        mid = ttk.LabelFrame(frame, text="2단계 · 분류 실행 (Distribute)")
+        folders = ttk.LabelFrame(frame, text="2단계 · 폴더 만들기 (Create folders)")
+        folders.pack(fill="x", padx=6, pady=6)
+        ttk.Label(
+            folders,
+            text="업체/담당자 구조로 Outlook 폴더를 미리 만듭니다. "
+            "Exchange·IMAP 계정이면 서버와 동기화되어 웹·휴대폰에서도 보입니다.",
+            wraplength=980,
+        ).pack(anchor="w", padx=8, pady=(6, 2))
+
+        frow = ttk.Frame(folders)
+        frow.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Label(frow, text="최소 메일 수:").pack(side="left")
+        self.var_min_msgs = tk.StringVar(value="1")
+        ttk.Spinbox(frow, from_=1, to=99, width=5, textvariable=self.var_min_msgs).pack(
+            side="left", padx=(4, 10)
+        )
+        self.var_people_folders = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            frow, text="담당자 하위 폴더까지", variable=self.var_people_folders
+        ).pack(side="left")
+
+        ttk.Button(
+            frow, text="폴더 만들기 (Create)", command=lambda: self._on_folders(False)
+        ).pack(side="right", padx=4)
+        ttk.Button(
+            frow, text="미리보기 (Preview)", command=lambda: self._on_folders(True)
+        ).pack(side="right", padx=4)
+
+        mid = ttk.LabelFrame(frame, text="3단계 · 분류 실행 (Distribute)")
         mid.pack(fill="x", padx=6, pady=6)
 
         row = ttk.Frame(mid)
@@ -356,6 +385,44 @@ class App(tk.Tk):
                 self._log("error", f"{stats.errors} item(s) could not be read.")
 
         self._run_worker(job, "Learn")
+
+    def _on_folders(self, preview: bool) -> None:
+        try:
+            min_messages = max(1, int(self.var_min_msgs.get().strip()))
+        except ValueError:
+            min_messages = 1
+        include_people = self.var_people_folders.get()
+
+        def job(client: OutlookClient, store: IdentityStore) -> None:
+            builder = FolderBuilder(client, store, RuleSet.load(), self.settings)
+            report = builder.build(
+                min_messages=min_messages,
+                include_people=include_people,
+                dry_run=preview,
+            )
+
+            self._log(
+                "info",
+                f"--- 폴더 {'미리보기' if preview else '만들기'} --- "
+                f"store: {report.store_name} ({report.store_kind})",
+            )
+            if not report.store_syncs:
+                self._log(
+                    "error",
+                    "이 저장소는 로컬 .pst 입니다. 여기에 만든 폴더는 이 PC에만 "
+                    "존재하며 서버·웹·휴대폰과 동기화되지 않습니다.",
+                )
+
+            for plan in report.plans:
+                if plan.error:
+                    self._log("error", plan.describe())
+                elif not plan.exists:
+                    self._log("action", plan.describe())
+            self._log("info", report.describe())
+            if preview and report.missing:
+                self._log("info", "'폴더 만들기' 를 누르면 실제로 생성됩니다.")
+
+        self._run_worker(job, "폴더 미리보기" if preview else "폴더 만들기")
 
     def _on_run_once(self) -> None:
         self.settings.dry_run = self.var_dry.get()

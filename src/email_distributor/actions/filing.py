@@ -36,6 +36,14 @@ def _safe_entry_id(item: Any) -> str:
         return ""
 
 
+def _safe_folders(folder: Any) -> list[Any]:
+    """Subfolders as a plain list, snapshotted before anything is moved."""
+    try:
+        return list(folder.Folders)
+    except Exception:  # noqa: BLE001
+        return []
+
+
 @dataclass
 class FileResult:
     message: Message
@@ -232,6 +240,35 @@ class Distributor:
             log.warning("failed to file %s: %s", message.summary(), exc)
 
         return result
+
+    def process_tree(
+        self,
+        folder: Any,
+        limit: int = 200,
+        reprocess: bool = False,
+        on_result: Optional[Callable[[FileResult], None]] = None,
+    ) -> RunSummary:
+        """Process a folder and every folder beneath it.
+
+        Used to re-file mail that an earlier ruleset already sorted: the
+        messages are no longer in the watch folder, so only a recursive pass
+        can reach them.
+        """
+        combined = RunSummary(dry_run=self.settings.dry_run)
+
+        def walk(current: Any) -> None:
+            if len(combined.results) >= limit:
+                return
+            remaining = limit - len(combined.results)
+            summary = self.process_folder(
+                current, limit=remaining, reprocess=reprocess, on_result=on_result
+            )
+            combined.results.extend(summary.results)
+            for sub in _safe_folders(current):
+                walk(sub)
+
+        walk(folder)
+        return combined
 
     def process_watch_folder(
         self,

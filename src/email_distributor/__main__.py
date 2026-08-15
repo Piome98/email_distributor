@@ -16,7 +16,8 @@ import sys
 import time
 
 from .actions.filing import Distributor
-from .config import Settings, data_dir, log_path
+from .actions.folders import FolderBuilder
+from .config import Settings, data_dir, log_path, rules_path
 from .identity.learner import Learner
 from .identity.store import IdentityStore
 from .outlook.client import COM_AVAILABLE, OutlookClient, OutlookError
@@ -144,17 +145,65 @@ def cmd_run(args: argparse.Namespace) -> int:
     with OutlookClient() as client, IdentityStore() as store:
         distributor = Distributor(client, store, RuleSet.load(), settings)
         mode = "LIVE - mail will be moved" if args.live else "DRY RUN - nothing will change"
-        print(f"Filing '{settings.watch_folder}' ({mode})\n")
+        target = args.folder or settings.watch_folder
+        scope = " and its subfolders" if args.recurse else ""
+        print(f"Filing '{target}'{scope} ({mode})\n")
 
-        summary = distributor.process_watch_folder(
-            limit=args.limit,
-            on_result=lambda r: print(r.describe())
-            if (r.decision.has_effect and not r.skipped_reason) or r.error
-            else None,
-        )
+        report = lambda r: print(r.describe()) if (  # noqa: E731
+            (r.decision.has_effect and not r.skipped_reason) or r.error
+        ) else None
+
+        if args.folder or args.recurse:
+            folder = client.get_folder(target)
+            if folder is None:
+                print(f"Folder not found: {target!r}")
+                return 4
+            if args.recurse:
+                summary = distributor.process_tree(
+                    folder, limit=args.limit, reprocess=args.reprocess,
+                    on_result=report,
+                )
+            else:
+                summary = distributor.process_folder(
+                    folder, limit=args.limit, reprocess=args.reprocess,
+                    on_result=report,
+                )
+        else:
+            summary = distributor.process_watch_folder(
+                limit=args.limit, on_result=report
+            )
         print("\n" + summary.describe())
         if not args.live and summary.planned:
             print("\nRe-run with --live to apply these changes.")
+    return 0
+
+
+def cmd_folders(args: argparse.Namespace) -> int:
+    settings = Settings.load()
+
+    with OutlookClient() as client, IdentityStore() as store:
+        builder = FolderBuilder(client, store, RuleSet.load(), settings)
+        report = builder.build(
+            min_messages=args.min_messages,
+            include_people=not args.companies_only,
+            dry_run=not args.live,
+        )
+
+        print(f"Store : {report.store_name}  ({report.store_kind})")
+        if not report.store_syncs:
+            print(
+                "\nWARNING: this is a local .pst. Folders created here exist only\n"
+                "         on this PC - they will not appear on the web client or\n"
+                "         on your phone, and are lost if the machine is rebuilt.\n"
+            )
+        print(f"Rules : {rules_path()}\n")
+
+        for plan in report.plans:
+            print(f"  {plan.describe()}")
+
+        print("\n" + report.describe())
+        if not args.live and report.missing:
+            print("\nRe-run with --live to create these folders in Outlook.")
     return 0
 
 
@@ -199,11 +248,41 @@ def build_parser() -> argparse.ArgumentParser:
     learn.add_argument("--limit", type=int, default=0, help="max messages per folder")
     learn.set_defaults(func=cmd_learn)
 
+    folders = sub.add_parser(
+        "folders", help="create the 업체/담당자 folder tree in Outlook"
+    )
+    folders.add_argument(
+        "--live", action="store_true", help="actually create them (default: preview)"
+    )
+    folders.add_argument(
+        "--min-messages",
+        type=int,
+        default=1,
+        help="only make a 담당자 folder for contacts with at least this many messages",
+    )
+    folders.add_argument(
+        "--companies-only",
+        action="store_true",
+        help="stop at the 업체 level, no per-contact subfolders",
+    )
+    folders.set_defaults(func=cmd_folders)
+
     run = sub.add_parser("run", help="one filing pass over the watch folder")
     run.add_argument(
         "--live", action="store_true", help="actually apply changes (default: dry run)"
     )
     run.add_argument("--limit", type=int, default=200, help="max messages to examine")
+    run.add_argument(
+        "--folder", default="", help="file this folder instead of the watch folder"
+    )
+    run.add_argument(
+        "--recurse", action="store_true", help="include every subfolder as well"
+    )
+    run.add_argument(
+        "--reprocess",
+        action="store_true",
+        help="re-file messages already recorded as done (use when rules changed)",
+    )
     run.set_defaults(func=cmd_run)
 
     return parser

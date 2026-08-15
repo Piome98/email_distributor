@@ -88,6 +88,14 @@ class Match:
     is_internal: Optional[bool] = None
     is_unknown: Optional[bool] = None      # sender not matched to any company
     is_public_domain: Optional[bool] = None
+
+    # True only when the company has been put into a group by the user.
+    #
+    # This is the difference between "the learner saw this domain" and "I have
+    # confirmed this is a 거래처". Every newsletter domain becomes a company
+    # automatically, so without this test the rules would file Instagram and
+    # Reddit alongside real customers.
+    has_group: Optional[bool] = None
     has_attachments: Optional[bool] = None
     unread_only: Optional[bool] = None
     importance_min: Optional[int] = None
@@ -126,6 +134,8 @@ class Match:
             results.append((not identity.known) == self.is_unknown)
         if self.is_public_domain is not None:
             results.append(identity.is_public_domain == self.is_public_domain)
+        if self.has_group is not None:
+            results.append(bool(identity.group_name) == self.has_group)
         if self.has_attachments is not None:
             results.append(message.has_attachments == self.has_attachments)
         if self.unread_only is not None:
@@ -295,9 +305,18 @@ def default_ruleset() -> RuleSet:
     """A safe, useful starting point.
 
     Ordering matters: internal mail is claimed first so colleagues never end up
-    filed as an external company, then known companies are filed by group, and
-    finally anything unrecognised is set aside for review rather than being
-    filed somewhere misleading.
+    filed as an external company, then confirmed 거래처 are filed under
+    거래처/{업체}/{담당자}.
+
+    Only companies **you have put into a group** are filed. The learner turns
+    every domain it meets into a company, newsletters included, so without that
+    condition the rules would file Instagram and Reddit next to real customers
+    and empty the Inbox into folders that mean nothing. Assigning a group on
+    the Companies tab is the act of saying "this really is a 거래처".
+
+    Everything else is deliberately **left in the Inbox** and merely tagged.
+    Moving mail we cannot explain only relocates the problem into a folder
+    nobody reads; the person reading it knows what it is, and can file it.
     """
     return RuleSet(
         [
@@ -307,20 +326,17 @@ def default_ruleset() -> RuleSet:
                 actions=Actions(categories=["사내"]),
             ),
             Rule(
-                name="그룹별 분류 (known company, with group)",
-                match=Match(is_unknown=False),
+                name="거래처/담당자별 분류 (confirmed companies only)",
+                match=Match(is_unknown=False, has_group=True),
                 actions=Actions(
-                    move_to="Inbox/거래처/{group}/{company}",
+                    move_to="Inbox/거래처/{company}/{person}",
                     categories=["{group}", "{company}"],
                 ),
             ),
             Rule(
-                name="미분류 발신자 (unknown sender)",
-                match=Match(is_unknown=True),
-                actions=Actions(
-                    move_to="Inbox/거래처/_미분류",
-                    categories=["미분류"],
-                ),
+                name="미확인 - 받은 편지함에 그대로 둠 (not yet grouped: leave in Inbox)",
+                match=Match(),
+                actions=Actions(categories=["미분류"]),
             ),
         ]
     )
