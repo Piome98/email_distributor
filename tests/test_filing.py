@@ -187,6 +187,48 @@ class TestFailedMove(FilingTestCase):
         self.assertTrue(all(r.error for r in results))
 
 
+class TestUnresolvedSender(FilingTestCase):
+    """An address-book failure must not be mistaken for an unknown company.
+
+    On Exchange, SenderEmailAddress is an X.500 DN and the real address has to
+    be looked up. If that lookup fails the sender is empty - and filing it as
+    "unknown" would sweep internal mail into a review folder on the strength
+    of a transient failure.
+    """
+
+    def test_a_message_with_no_resolvable_sender_is_skipped(self):
+        client = FakeClient()
+        dist = self.distributor(client)
+        message = make_message(sender="")
+        result = dist._process_one(FakeItem("E1"), message, reprocess=False)
+
+        self.assertIn("could not be resolved", result.skipped_reason)
+        self.assertEqual(client.moved, [])
+        self.assertEqual(client.categorised, [])
+
+    def test_it_is_not_recorded_as_processed(self):
+        """It must be retried once the address book is reachable again."""
+        client = FakeClient()
+        dist = self.distributor(client)
+        dist._process_one(FakeItem("E1"), make_message(sender=""), reprocess=False)
+        self.assertFalse(self.store.is_processed("E1"))
+
+    def test_the_unknown_rule_does_not_claim_it(self):
+        self.ruleset = RuleSet([
+            Rule(
+                name="미분류",
+                match=Match(is_unknown=True),
+                actions=Actions(move_to="Inbox/_미분류", categories=["미분류"]),
+            )
+        ])
+        client = FakeClient()
+        result = self.distributor(client)._process_one(
+            FakeItem("E1"), make_message(sender=""), reprocess=False
+        )
+        self.assertTrue(result.skipped_reason)
+        self.assertEqual(client.moved, [])
+
+
 class TestDryRun(FilingTestCase):
     def test_dry_run_changes_nothing(self):
         self.settings.dry_run = True

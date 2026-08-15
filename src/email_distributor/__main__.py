@@ -84,6 +84,20 @@ def cmd_learn(args: argparse.Namespace) -> int:
 
         stats = Learner(client, store, settings).learn_all(progress=progress)
         print("\n" + stats.describe())
+
+        if stats.unresolved_senders:
+            print(
+                "\nSome senders could not be resolved to an email address. On an "
+                "Exchange profile this usually means the address-book lookup is "
+                "failing.\nCheck the People tab: addresses should look like "
+                "name@company.com, never /O=EXCHANGELABS/...\n"
+                "Messages whose sender cannot be resolved are skipped, never filed."
+            )
+        elif stats.exchange_senders:
+            print(
+                f"\nAll {stats.exchange_senders} Exchange sender(s) resolved to real "
+                "SMTP addresses."
+            )
     return 0
 
 

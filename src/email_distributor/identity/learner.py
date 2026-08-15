@@ -97,15 +97,25 @@ class LearnStats:
     companies_created: int = 0
     signatures_parsed: int = 0
     skipped_public: int = 0
+    unresolved_senders: int = 0
+    exchange_senders: int = 0
     errors: int = 0
     folders: list[str] = field(default_factory=list)
 
     def describe(self) -> str:
-        return (
+        text = (
             f"{self.mail_read} messages read from {len(self.folders)} folder(s); "
             f"{self.people_seen} people, {self.companies_created} new companies, "
             f"{self.signatures_parsed} signatures parsed"
         )
+        if self.exchange_senders:
+            text += f"; {self.exchange_senders} Exchange sender(s) resolved"
+        if self.unresolved_senders:
+            text += (
+                f"; WARNING {self.unresolved_senders} sender(s) could not be "
+                "resolved to an email address"
+            )
+        return text
 
 
 class Learner:
@@ -182,7 +192,15 @@ class Learner:
         """Extract every identity fact one message has to offer."""
         stats.scanned += 1
         email = (message.sender_email or "").strip().lower()
+
+        # Track how often the Exchange X.500 path had to run and whether it
+        # worked. On a corporate profile this is the number to watch: a high
+        # unresolved count means the address book lookup is failing and no
+        # internal colleague will be identified correctly.
+        if message.sender_type == "EX":
+            stats.exchange_senders += 1
         if not email or "@" not in email:
+            stats.unresolved_senders += 1
             return
 
         domain = split_domain(email)

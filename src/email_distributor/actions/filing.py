@@ -197,6 +197,14 @@ class Distributor:
         if not message.entry_id:
             result.skipped_reason = "message has no EntryID"
             return result
+        # If the sender could not be resolved to a real address we know nothing
+        # about this message, so the safe action is none at all. Filing it as
+        # "unknown" would sweep mail into a review folder on the strength of a
+        # lookup failure - which is exactly what an Exchange address-book
+        # hiccup looks like.
+        if not message.sender_email:
+            result.skipped_reason = "sender address could not be resolved"
+            return result
         if not reprocess and self.store.is_processed(message.entry_id):
             result.skipped_reason = "already processed"
             return result
