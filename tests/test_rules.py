@@ -1,7 +1,9 @@
-"""Rule matching, template expansion and folder-name safety."""
+﻿"""Rule matching, template expansion and folder-name safety."""
 
+import json
 import unittest
 from datetime import datetime
+from pathlib import Path
 
 from email_distributor.identity.models import Company, Identity, Person
 from email_distributor.outlook.message import Message
@@ -224,6 +226,76 @@ class TestDefaultRuleset(unittest.TestCase):
             make_message(), make_identity(is_internal=True)
         )
         self.assertEqual(decision.move_to, "")
+
+
+class TestVersionUpgrade(unittest.TestCase):
+    """An untouched default must pick up improvements; edits must not be lost.
+
+    A file written by an older version was otherwise used forever, so fixes to
+    the shipped rules never reached anyone who had run the app before.
+    """
+
+    def setUp(self):
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self._tmp.name) / "rules.json"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write(self, payload):
+        self.path.write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
+
+    def test_untouched_old_default_is_upgraded(self):
+        self._write({
+            "version": 1,
+            "generated": True,
+            "rules": [{"name": "옛날 규칙", "actions": {"move_to": "Inbox/old"}}],
+        })
+        loaded = RuleSet.load(self.path)
+        self.assertEqual(
+            [r.name for r in loaded.rules],
+            [r.name for r in default_ruleset().rules],
+        )
+
+    def test_edited_rules_are_never_replaced(self):
+        self._write({
+            "version": 1,
+            "generated": False,
+            "rules": [{"name": "내 규칙", "actions": {"move_to": "Inbox/mine"}}],
+        })
+        loaded = RuleSet.load(self.path)
+        self.assertEqual([r.name for r in loaded.rules], ["내 규칙"])
+
+    def test_a_file_predating_the_flag_is_upgraded_but_backed_up(self):
+        """Those files all came from a shipped default, so they upgrade.
+
+        A copy is kept because that inference could be wrong for someone who
+        hand-edited an early file.
+        """
+        self._write({"version": 1, "rules": [{"name": "옛날 규칙"}]})
+        loaded = RuleSet.load(self.path)
+        self.assertEqual(
+            [r.name for r in loaded.rules], [r.name for r in default_ruleset().rules]
+        )
+        backup = self.path.with_name(self.path.name + ".bak")
+        self.assertTrue(backup.exists())
+        self.assertIn("옛날 규칙", backup.read_text(encoding="utf-8"))
+
+    def test_current_version_is_left_alone(self):
+        default_ruleset().save(self.path)
+        before = self.path.read_text(encoding="utf-8")
+        RuleSet.load(self.path)
+        self.assertEqual(self.path.read_text(encoding="utf-8"), before)
+
+    def test_saving_from_the_ui_marks_rules_as_edited(self):
+        ruleset = default_ruleset()
+        ruleset.generated = False
+        ruleset.save(self.path)
+        self.assertFalse(RuleSet.load(self.path).generated)
 
 
 class TestPersistence(unittest.TestCase):

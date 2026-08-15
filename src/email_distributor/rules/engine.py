@@ -9,6 +9,7 @@ which case evaluation continues and later actions are merged over earlier ones.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -18,6 +19,8 @@ from typing import Any, Optional
 from ..config import rules_path
 from ..identity.models import Identity
 from ..outlook.message import Message
+
+log = logging.getLogger(__name__)
 
 # Characters Outlook refuses in a folder name.
 RE_ILLEGAL_FOLDER_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -201,9 +204,21 @@ class Decision:
         return bool(self.move_to or self.categories or self.mark_read is not None)
 
 
+# Bumped whenever the shipped default rules change in a way that matters.
+# A saved file carrying an older version is regenerated - but only if the user
+# never edited it. See RuleSet.load.
+RULESET_VERSION = 3
+
+
 class RuleSet:
-    def __init__(self, rules: Optional[list[Rule]] = None) -> None:
+    def __init__(
+        self, rules: Optional[list[Rule]] = None, generated: bool = False
+    ) -> None:
         self.rules: list[Rule] = rules if rules is not None else []
+        # True while these rules are exactly as shipped. Saving from the UI
+        # clears it, which is what protects hand-written rules from being
+        # overwritten by a later upgrade.
+        self.generated = generated
 
     # ------------------------------------------------------------------
     # Evaluation
@@ -242,7 +257,8 @@ class RuleSet:
     # ------------------------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
         return {
-            "version": 1,
+            "version": RULESET_VERSION,
+            "generated": self.generated,
             "rules": [
                 {
                     "name": r.name,
@@ -270,6 +286,7 @@ class RuleSet:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "RuleSet":
+        generated = bool(raw.get("generated", False))
         rules: list[Rule] = []
         match_fields = set(Match.__dataclass_fields__)
         action_fields = set(Actions.__dataclass_fields__)
@@ -292,19 +309,65 @@ class RuleSet:
                     actions=Actions(**action_raw),
                 )
             )
-        return cls(rules)
+        return cls(rules, generated=generated)
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "RuleSet":
+        """Read the saved rules, upgrading untouched defaults automatically.
+
+        Without the upgrade, a file written by an older version is used
+        forever: improvements to the shipped rules never reach anyone who has
+        run the app before, and the tool silently keeps behaving the old way.
+        That is exactly how a stale ruleset ended up filing nothing.
+
+        Rules the user has edited are never replaced - saving from the UI
+        clears the `generated` flag, and only generated files are upgraded.
+        """
         target = Path(path) if path else rules_path()
         if not target.exists():
             ruleset = default_ruleset()
             ruleset.save(target)
             return ruleset
+
         try:
-            return cls.from_dict(json.loads(target.read_text(encoding="utf-8")))
-        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            raw = json.loads(target.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
             return default_ruleset()
+
+        try:
+            ruleset = cls.from_dict(raw)
+        except (TypeError, ValueError):
+            return default_ruleset()
+
+        if int(raw.get("version", 0)) >= RULESET_VERSION:
+            return ruleset
+
+        # Files written before the flag existed carry no `generated` key at
+        # all. Those all came from a shipped default, so they are upgraded too
+        # - but a copy is kept first, because that inference could be wrong for
+        # someone who hand-edited an early file.
+        predates_flag = "generated" not in raw
+        if not (ruleset.generated or predates_flag):
+            return ruleset
+
+        if predates_flag:
+            backup = target.with_name(target.name + ".bak")
+            try:
+                backup.write_text(
+                    json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+                log.info("previous rules backed up to %s", backup)
+            except OSError:
+                pass
+
+        upgraded = default_ruleset()
+        upgraded.save(target)
+        log.info(
+            "rules.json was an untouched default from an older version; "
+            "upgraded to version %s",
+            RULESET_VERSION,
+        )
+        return upgraded
 
 
 def default_ruleset() -> RuleSet:
@@ -357,5 +420,6 @@ def default_ruleset() -> RuleSet:
                 match=Match(),
                 actions=Actions(categories=["미분류"]),
             ),
-        ]
+        ],
+        generated=True,
     )

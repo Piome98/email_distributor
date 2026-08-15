@@ -662,6 +662,9 @@ class App(tk.Tk):
         except (TypeError, ValueError) as exc:
             messagebox.showerror("규칙 오류", f"규칙 형식이 올바르지 않습니다.\n\n{exc}")
             return
+        # These are now the user's rules, so a future version upgrade must not
+        # overwrite them.
+        ruleset.generated = False
         ruleset.save()
         self._log("info", f"Rules saved: {len(ruleset.rules)} rule(s)")
         messagebox.showinfo("저장됨", f"{len(ruleset.rules)}개의 규칙을 저장했습니다.")
