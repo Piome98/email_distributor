@@ -165,14 +165,15 @@ class App(tk.Tk):
         ttk.Button(bar, text="삭제 (Delete)", command=self._delete_company).pack(side="left")
         ttk.Label(bar, text="  회사명을 실제 상호로 바꾸면 폴더 이름도 함께 바뀝니다.").pack(side="left", padx=8)
 
-        columns = ("name", "group", "internal", "domains", "people")
+        columns = ("name", "group", "internal", "domains", "address", "people")
         self.tree_companies = ttk.Treeview(frame, columns=columns, show="headings")
         for col, text, width in (
-            ("name", "회사 (Company)", 240),
-            ("group", "그룹 (Group)", 130),
-            ("internal", "사내", 60),
-            ("domains", "도메인 (Domains)", 300),
-            ("people", "담당자 수", 80),
+            ("name", "회사 (Company)", 200),
+            ("group", "그룹 (Group)", 110),
+            ("internal", "사내", 50),
+            ("domains", "도메인 (Domains)", 220),
+            ("address", "주소 (Address)", 280),
+            ("people", "담당자 수", 70),
         ):
             self.tree_companies.heading(col, text=text)
             self.tree_companies.column(col, width=width, anchor="w")
@@ -191,15 +192,17 @@ class App(tk.Tk):
         entry.pack(side="left")
         entry.bind("<KeyRelease>", lambda _e: self._refresh_people())
 
-        columns = ("email", "name", "title", "dept", "company", "count")
+        columns = ("email", "name", "title", "dept", "company", "contact", "address", "count")
         self.tree_people = ttk.Treeview(frame, columns=columns, show="headings")
         for col, text, width in (
-            ("email", "이메일", 250),
-            ("name", "이름", 110),
-            ("title", "직급", 90),
-            ("dept", "부서", 150),
-            ("company", "회사", 190),
-            ("count", "메일 수", 70),
+            ("email", "이메일", 210),
+            ("name", "이름", 90),
+            ("title", "직급", 70),
+            ("dept", "부서", 120),
+            ("company", "회사", 150),
+            ("contact", "연락처", 120),
+            ("address", "주소", 230),
+            ("count", "메일 수", 60),
         ):
             self.tree_people.heading(col, text=text)
             self.tree_people.column(col, width=width, anchor="w")
@@ -428,6 +431,7 @@ class App(tk.Tk):
                     company.group_name,
                     "예" if company.is_internal else "",
                     ", ".join(company.domains),
+                    company.address,
                     people,
                 ),
             )
@@ -453,6 +457,8 @@ class App(tk.Tk):
                     person.title,
                     person.department,
                     company,
+                    person.mobile or person.phone,
+                    person.address,
                     person.message_count,
                 ),
             )
@@ -613,11 +619,19 @@ class CompanyDialog(tk.Toplevel):
             row=2, column=1, sticky="w", pady=4
         )
 
-        ttk.Label(
-            body,
-            text=f"도메인: {', '.join(company.domains) or '(없음)'}",
-            foreground="#666666",
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 4))
+        details = "\n".join(
+            filter(
+                None,
+                (
+                    f"도메인: {', '.join(company.domains) or '(없음)'}",
+                    f"주소: {company.address}" if company.address else "",
+                    f"홈페이지: {company.website}" if company.website else "",
+                ),
+            )
+        )
+        ttk.Label(body, text=details, foreground="#666666", justify="left").grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(8, 4)
+        )
 
         buttons = ttk.Frame(body)
         buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(10, 0))

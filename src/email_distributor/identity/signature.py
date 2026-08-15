@@ -50,18 +50,46 @@ EN_TITLES = [
 
 # Organisational-unit suffixes. Used to spot a department name.
 #
-# 국, 처 and 단 were tried and removed: as single characters they match far
+# 국, 처, 단 and 과 were tried and removed: as single characters they match far
 # more ordinary Korean words than departments - 한국/외국/결국, 거래처/출처/근처,
 # and 재단/집단/판단. "한국고등교육재단" (a foundation) was being filed as
-# somebody's department because of the trailing 단.
+# somebody's department because of the trailing 단, and 과 is the everyday
+# conjunction "and", which turned "행동과 심리" into the department "행동과".
+# 과 as a unit (총무과, 인사과) is mostly government and school usage.
 DEPT_SUFFIXES = [
     "사업본부", "사업부문", "연구소", "사업부", "본부", "센터", "그룹",
-    "팀", "실", "부", "과", "파트",
+    "팀", "실", "부", "파트",
 ]
 
 # Suffixes that mark a whole organisation rather than a unit inside one, so a
 # match ending in one of these is never a department.
 ORG_NOT_DEPT_SUFFIXES = ("재단", "법인", "공단", "공사", "협회", "조합", "학회")
+
+# Recruitment words that pair with a rank and imitate a name+rank pair -
+# "인턴사원" parses as the person 인턴 holding the rank 사원.
+NAME_STOPWORDS = frozenset(
+    {
+        "인턴", "신입", "경력", "담당", "채용", "모집", "지원", "우대", "대상", "정규",
+        # Qualification prefixes that sit directly in front of a professional
+        # rank: "공인회계사" is one word, not the person 공인 ranked 회계사.
+        "공인", "세무", "노무", "변리", "법무", "관세",
+    }
+)
+
+# Copyright furniture that precedes a company name in a footer:
+# "© 2026 Google LLC" should yield "Google LLC".
+RE_COMPANY_NOISE_PREFIX = re.compile(
+    r"^(?:©|\(c\)|copyright)?\s*(?:\d{4})?\s*(?:©|\(c\))?\s*", re.IGNORECASE
+)
+
+# Statutory details that only ever appear in a genuine corporate footer. A long
+# line carrying one of these is worth scanning for a company name; an equally
+# long line of marketing copy is not.
+RE_CORPORATE_FOOTER = re.compile(
+    r"사업자\s*등록\s*번호|사업자번호|법인등록번호|통신판매업|대표이사|대표자"
+    r"|Business Registration|All rights reserved",
+    re.IGNORECASE,
+)
 
 EN_DEPT_SUFFIXES = [
     "Business Unit", "Headquarters", "Laboratory", "Department", "Institute",
@@ -137,17 +165,89 @@ RE_PHONE = re.compile(
 )
 
 # Labels that mark the number that follows as mobile vs. landline.
+#
+# Single-letter labels (M, C, T, F) must be followed by "." or ":" to count.
+# A bare letter is far too common inside ordinary Korean text - the real
+# address fragment "원그로브 C동 12층" was being read as a mobile marker.
 RE_MOBILE_LABEL = re.compile(
-    r"(?:^|[\s\|,/·\(\[])(?:M|Mobile|Cell|C|HP|H\.P|H/P|핸드폰|휴대폰|휴대전화|모바일)"
-    r"\s*[\.:）\)]?\s*",
+    r"(?:^|[\s\|,/·\(\[])(?:(?:Mobile|Cell|HP|H\.P|H/P|핸드폰|휴대폰|휴대전화|모바일)"
+    r"\s*[\.:：）\)]?|(?:M|C)\s*[\.:：])\s*",
     re.IGNORECASE,
 )
 RE_PHONE_LABEL = re.compile(
-    r"(?:^|[\s\|,/·\(\[])(?:T|Tel|TEL|Phone|Off|Office|직통|유선|전화|사무실)"
-    r"\s*[\.:）\)]?\s*",
+    r"(?:^|[\s\|,/·\(\[])(?:(?:Tel|TEL|Phone|Off|Office|직통|유선|전화|사무실)"
+    r"\s*[\.:：）\)]?|T\s*[\.:：])\s*",
     re.IGNORECASE,
 )
-RE_FAX_LABEL = re.compile(r"(?:^|[\s\|,/·])(?:F|Fax|팩스)\s*[\.:）\)]?\s*", re.IGNORECASE)
+RE_FAX_LABEL = re.compile(
+    r"(?:^|[\s\|,/·])(?:(?:Fax|팩스)\s*[\.:：）\)]?|F\s*[\.:：])\s*", re.IGNORECASE
+)
+
+# --------------------------------------------------------------------------
+# Labelled fields
+#
+# Korean corporate footers label their fields explicitly - "주소 : ...",
+# "문의처: ...", "전화 : ...". Reading the label is far more reliable than
+# inferring a field from its position, so labels are consulted first and the
+# positional heuristics are only a fallback.
+#
+# Order matters: mobile is tried before phone so "휴대폰"/"M." is not swallowed
+# by the more general telephone labels.
+# --------------------------------------------------------------------------
+LABEL_PATTERNS: dict[str, list[str]] = {
+    "mobile": ["휴대폰", "휴대전화", "핸드폰", "모바일", "Mobile", "Cell",
+               "H.P", "H/P", "HP", "M"],
+    "fax": ["팩스", "Fax", "F"],
+    "phone": ["대표전화", "사무실", "문의처", "연락처", "직통", "유선", "전화",
+              "Tel", "Phone", "Office", "T"],
+    "address": ["본사주소", "회사주소", "소재지", "주소", "본사", "Address", "Addr"],
+    "email": ["이메일", "메일주소", "E-mail", "Email", "Mail"],
+    "website": ["홈페이지", "웹사이트", "Homepage", "Website", "Web", "URL"],
+    "department": ["부서", "소속", "Department", "Dept"],
+    "title": ["직급", "직위", "직책", "Position", "Title"],
+    "name": ["성명", "이름", "Name"],
+    "company": ["회사명", "상호", "회사", "Company"],
+}
+
+
+def _compile_label(labels: list[str]) -> re.Pattern[str]:
+    alt = "|".join(re.escape(l) for l in sorted(labels, key=len, reverse=True))
+    return re.compile(rf"^\s*(?:{alt})\s*[:：]\s*(.+)$", re.IGNORECASE)
+
+
+LABEL_RE: dict[str, re.Pattern[str]] = {
+    field: _compile_label(labels) for field, labels in LABEL_PATTERNS.items()
+}
+
+RE_URL = re.compile(r"(?:https?://|www\.)[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
+
+# An unlabelled Korean address still opens with a province or metropolitan
+# city, which makes it recognisable without a label.
+RE_KR_ADDRESS = re.compile(
+    r"((?:서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)"
+    r"(?:특별자치시|특별자치도|특별시|광역시|도)?\s+[^\n|ㅣ｜]{5,70})"
+)
+
+# Marks a line as part of a postal address, where a "센터" or "실" names a
+# building rather than somebody's department.
+#
+# Note the deliberate omission of 동, 로 and 길 as standalone endings: Korean
+# personal names routinely end in them ("홍길동"), and treating those as
+# district markers made the parser discard genuine signature lines.
+RE_ADDRESS_HINT = re.compile(
+    r"특별시|광역시|특별자치|\d+\s*층|\d+\s*호|빌딩|타워|B/D|우편번호|\(우\)"
+)
+
+# An administrative unit only counts as an address when the line also carries
+# a number - "용인시 처인구 남사읍 서촌로 12".
+RE_ADMIN_UNIT = re.compile(r"[가-힣]{2,}(?:시|군|구|읍|면)(?=\s|,|$)")
+
+# The corporate-form markers as a pattern, so a company name can be lifted out
+# of a longer sentence instead of swallowing the whole line.
+RE_KO_COMPANY_TOKEN = re.compile(
+    r"(?:\(주\)|㈜|\(유\)|\(재\)|주식회사|유한회사)\s?[A-Za-z0-9가-힣&\.\-]{1,25}"
+    r"|[A-Za-z0-9가-힣&\.\-]{1,25}\s?(?:\(주\)|㈜|\(유\)|\(재\))"
+)
 
 # Where a reply/forward begins - everything below this is somebody else's mail.
 RE_QUOTE_BOUNDARY = re.compile(
@@ -186,12 +286,21 @@ class SignatureInfo:
     company: str = ""
     phone: str = ""
     mobile: str = ""
+    fax: str = ""
     email: str = ""
+    address: str = ""
+    website: str = ""
+
+    # True only when an actual individual signed off - a name paired with a
+    # rank, a labelled 성명, or a Latin name on its own line. Bulk mail sets
+    # this False even when other fields were found, because a newsletter's
+    # footer describes a mailing list, not a correspondent.
+    personal: bool = False
 
     def is_empty(self) -> bool:
         return not any(
             (self.name, self.title, self.department, self.company, self.phone,
-             self.mobile)
+             self.mobile, self.address)
         )
 
     @property
@@ -200,11 +309,12 @@ class SignatureInfo:
         score = 0
         for field_value, weight in (
             (self.name, 25), (self.company, 25), (self.title, 20),
-            (self.department, 15), (self.mobile, 10), (self.phone, 5),
+            (self.department, 15), (self.address, 10), (self.mobile, 10),
+            (self.phone, 5),
         ):
             if field_value:
                 score += weight
-        return score
+        return min(score, 100)
 
 
 def _clean_field(value: str) -> str:
@@ -239,14 +349,53 @@ def _clean_lines(text: str, tail: int = 18) -> list[str]:
     return lines[-tail:]
 
 
+def _looks_like_address(line: str) -> bool:
+    """True when a line reads as a postal address rather than an identity."""
+    if RE_ADDRESS_HINT.search(line):
+        return True
+    return bool(RE_ADMIN_UNIT.search(line) and re.search(r"\d", line))
+
+
 def _segments(line: str) -> list[str]:
     """Split a signature line on its visual separators.
 
     Commas are deliberately *not* separators: they occur inside legitimate
     company names such as "Hanguk Electronics Co., Ltd.".
+
+    Korean footers frequently use the hangul filler ㅣ (U+3163) or the
+    fullwidth ｜ (U+FF5C) in place of a pipe, so both count as separators.
     """
-    parts = re.split(r"\s*[|/·]\s*|\s{2,}", line)
+    parts = re.split(r"\s*[|/·ㅣ｜･]\s*|\s{2,}", line)
     return [p.strip() for p in parts if p.strip()]
+
+
+def _looks_like_person_name(line: str) -> bool:
+    """True when a Latin-script line is plausibly a person rather than a firm.
+
+    "DMK Global" and "IBM Korea" have the shape of a two-word personal name,
+    so an all-capitals token is taken as evidence of an organisation.
+    """
+    if not RE_EN_NAME_LINE.match(line):
+        return False
+    if any(marker.lower() in line.lower() for marker in EN_COMPANY_MARKERS):
+        return False
+    return not any(
+        len(token.strip(".")) >= 2 and token.strip(".").isupper()
+        for token in line.split()
+    )
+
+
+def _extract_labelled(lines: list[str]) -> dict[str, str]:
+    """Read every "라벨 : 값" pair the block declares. First one per field wins."""
+    found: dict[str, str] = {}
+    for line in lines:
+        for field, pattern in LABEL_RE.items():
+            if field in found:
+                continue
+            match = pattern.match(line)
+            if match and match.group(1).strip():
+                found[field] = match.group(1).strip()
+    return found
 
 
 def _extract_company(lines: list[str]) -> str:
@@ -257,14 +406,36 @@ def _extract_company(lines: list[str]) -> str:
     the first segment of the line.
     """
     for line in lines:
-        for marker in KO_COMPANY_MARKERS + EN_COMPANY_MARKERS:
-            if marker.lower() not in line.lower():
-                continue
-            for segment in _segments(line):
-                if marker.lower() in segment.lower():
-                    candidate = RE_EMAIL.sub("", segment).strip(" ,|/-·")
-                    if 2 <= len(candidate) <= 60:
-                        return candidate
+        # Korean forms are bounded by the marker itself, so the name can be
+        # lifted out of anywhere in the line - including mid-sentence, as in
+        # "안녕하십니까? 가온전선(주)입니다".
+        korean = RE_KO_COMPANY_TOKEN.search(line)
+        if korean:
+            candidate = _clean_field(korean.group(0))
+            if 2 <= len(candidate) <= 60:
+                return candidate
+
+        # English forms end at their marker, so keep everything up to it and
+        # drop whatever follows - usually the postal address.
+        for segment in _segments(line):
+            for marker in sorted(EN_COMPANY_MARKERS, key=len, reverse=True):
+                position = segment.lower().find(marker.lower())
+                if position < 0:
+                    continue
+                # The marker has to be its own word. Without this, a tracking
+                # token such as "eNg-xIMAkWZ6XpLcInc" would be harvested as a
+                # company simply because "Inc" appears inside it.
+                if position > 0 and not segment[position - 1].isspace():
+                    continue
+                candidate = _clean_field(
+                    RE_COMPANY_NOISE_PREFIX.sub(
+                        "", RE_EMAIL.sub("", segment[: position + len(marker)]).strip()
+                    )
+                )
+                # A bare marker is not a name: the word "Company" alone tells
+                # us nothing about who sent the mail.
+                if len(candidate) > len(marker) and 2 <= len(candidate) <= 60:
+                    return candidate
     return ""
 
 
@@ -300,7 +471,7 @@ def parse(body: str, sender_name: str = "") -> SignatureInfo:
         return SignatureInfo(name=sender_name.strip())
 
     text = strip_quoted(body)
-    lines = _clean_lines(text)
+    lines = _clean_lines(text, tail=26)
     if not lines:
         return SignatureInfo(name=sender_name.strip())
 
@@ -315,11 +486,34 @@ def parse(body: str, sender_name: str = "") -> SignatureInfo:
     blob = "\n".join(sig_lines)
     info = SignatureInfo()
 
+    # ---- Declared labels win over anything we could infer ----------------
+    labelled = _extract_labelled(lines)
+    for field in ("name", "title", "department", "company", "address"):
+        if labelled.get(field):
+            setattr(info, field, labelled[field])
+    if labelled.get("name"):
+        info.personal = True
+    for field in ("phone", "mobile", "fax"):
+        if labelled.get(field):
+            number = RE_PHONE.search(labelled[field])
+            if number:
+                setattr(info, field, number.group(0).strip())
+    if labelled.get("email"):
+        found = RE_EMAIL.search(labelled["email"])
+        if found:
+            info.email = found.group(0).lower()
+    if labelled.get("website"):
+        url = RE_URL.search(labelled["website"])
+        info.website = url.group(0) if url else labelled["website"]
+
+    # ---- Positional fallbacks, only for what the labels left unset -------
     # Name + rank together is the strongest signal, so try it first.
     match = RE_KO_NAME_TITLE.search(blob)
-    if match:
-        info.name, info.title = match.group(1), match.group(2)
-    else:
+    if match and match.group(1) not in NAME_STOPWORDS:
+        info.name = info.name or match.group(1)
+        info.title = info.title or match.group(2)
+        info.personal = True
+    elif not info.title:
         ko_title = RE_KO_TITLE.search(blob)
         if ko_title:
             info.title = ko_title.group(1)
@@ -328,29 +522,60 @@ def parse(body: str, sender_name: str = "") -> SignatureInfo:
             if en_title:
                 info.title = en_title.group(1)
 
-    dept = RE_DEPT.search(blob)
-    if dept:
-        candidate = dept.group(1).strip()
-        # "영업팀" is a department; a bare suffix like "팀" is not, and neither
-        # is an everyday word that merely ends in one.
-        if (
-            len(candidate) >= 2
-            and candidate not in DEPT_SUFFIXES
-            and candidate not in DEPT_STOPWORDS
-            and not candidate.endswith(ORG_NOT_DEPT_SUFFIXES)
-        ):
-            info.department = candidate
     if not info.department:
-        en_dept = RE_EN_DEPT.search(blob)
-        if en_dept:
-            info.department = en_dept.group(1).strip()
+        # Address lines are skipped: a building named "한국지식재산센터" or a
+        # room named "수면실" ends in a unit suffix but is a place, not a team.
+        for line in sig_lines:
+            if _looks_like_address(line):
+                continue
+            dept = RE_DEPT.search(line)
+            if not dept:
+                continue
+            candidate = dept.group(1).strip()
+            # "영업팀" is a department; a bare suffix like "팀" is not, and
+            # neither is an everyday word that merely ends in one.
+            if (
+                len(candidate) >= 2
+                and candidate not in DEPT_SUFFIXES
+                and candidate not in DEPT_STOPWORDS
+                and not candidate.endswith(ORG_NOT_DEPT_SUFFIXES)
+            ):
+                info.department = candidate
+                break
+    if not info.department:
+        for line in sig_lines:
+            if _looks_like_address(line):
+                continue
+            en_dept = RE_EN_DEPT.search(line)
+            if en_dept:
+                info.department = en_dept.group(1).strip()
+                break
 
-    info.company = _extract_company(sig_lines)
-    info.phone, info.mobile = _extract_phones(blob)
+    # Company detection sees the short signature lines plus any long line that
+    # carries statutory footer details - a real footer often packs the company,
+    # the CEO, the registration number and the address onto one long line.
+    # Arbitrary long marketing copy stays excluded: scanning it turned a
+    # newsletter's advertised employer into the sender's own company.
+    if not info.company:
+        info.company = _extract_company(
+            [l for l in lines if len(l) <= 70 or RE_CORPORATE_FOOTER.search(l)]
+        )
 
-    email = RE_EMAIL.search(blob)
-    if email:
-        info.email = email.group(0).lower()
+    phone, mobile = _extract_phones(blob)
+    info.phone = info.phone or phone
+    info.mobile = info.mobile or mobile
+
+    if not info.address:
+        for line in lines:
+            found = RE_KR_ADDRESS.search(line)
+            if found:
+                info.address = found.group(1)
+                break
+
+    if not info.email:
+        email = RE_EMAIL.search(blob)
+        if email:
+            info.email = email.group(0).lower()
 
     # Bulk and marketing mail has no personal signature, but it does have
     # plenty of capitalised prose that these patterns will happily mistake for
@@ -366,8 +591,9 @@ def parse(body: str, sender_name: str = "") -> SignatureInfo:
         for line in sig_lines:
             if line == info.company or RE_EMAIL.search(line):
                 continue
-            if RE_EN_NAME_LINE.match(line) and not RE_EN_TITLE.search(line):
+            if _looks_like_person_name(line) and not RE_EN_TITLE.search(line):
                 info.name = line
+                info.personal = True
                 break
 
     if not info.name:
@@ -380,6 +606,8 @@ def parse(body: str, sender_name: str = "") -> SignatureInfo:
         else:
             info.name = fallback
 
-    for field_name in ("name", "title", "department", "company", "phone", "mobile"):
+    for field_name in ("name", "title", "department", "company", "phone",
+                       "mobile", "fax", "address", "website"):
         setattr(info, field_name, _clean_field(getattr(info, field_name)))
+    info.address = info.address[:120]
     return info

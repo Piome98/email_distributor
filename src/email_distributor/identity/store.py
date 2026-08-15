@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS companies (
     is_internal INTEGER NOT NULL DEFAULT 0,
     notes       TEXT NOT NULL DEFAULT '',
     source      TEXT NOT NULL DEFAULT 'inferred',
+    address     TEXT NOT NULL DEFAULT '',
+    website     TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -60,6 +62,8 @@ CREATE TABLE IF NOT EXISTS people (
     title         TEXT NOT NULL DEFAULT '',
     phone         TEXT NOT NULL DEFAULT '',
     mobile        TEXT NOT NULL DEFAULT '',
+    fax           TEXT NOT NULL DEFAULT '',
+    address       TEXT NOT NULL DEFAULT '',
     source        TEXT NOT NULL DEFAULT 'inferred',
     message_count INTEGER NOT NULL DEFAULT 0,
     first_seen    TEXT NOT NULL DEFAULT '',
@@ -96,7 +100,31 @@ class IdentityStore:
         self.conn = sqlite3.connect(str(self.path))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was first created.
+
+        CREATE TABLE IF NOT EXISTS silently does nothing for an existing
+        database, so new columns have to be added explicitly or an upgraded
+        install would fail on every query that mentions them.
+        """
+        additions = (
+            ("companies", "address", "TEXT NOT NULL DEFAULT ''"),
+            ("companies", "website", "TEXT NOT NULL DEFAULT ''"),
+            ("people", "fax", "TEXT NOT NULL DEFAULT ''"),
+            ("people", "address", "TEXT NOT NULL DEFAULT ''"),
+        )
+        for table, column, declaration in additions:
+            existing = {
+                row["name"]
+                for row in self.conn.execute(f"PRAGMA table_info({table})")
+            }
+            if column not in existing:
+                self.conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {declaration}"
+                )
 
     def close(self) -> None:
         self.conn.close()
@@ -146,6 +174,8 @@ class IdentityStore:
         group: str = "",
         is_internal: bool = False,
         notes: str = "",
+        address: str = "",
+        website: str = "",
         source: str = SOURCE_INFERRED,
     ) -> int:
         name = name.strip()
@@ -160,25 +190,31 @@ class IdentityStore:
         if row is None:
             cur = self.conn.execute(
                 """INSERT INTO companies
-                       (name, group_id, is_internal, notes, source, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (name, group_id, int(is_internal), notes, source, _now(), _now()),
+                       (name, group_id, is_internal, notes, address, website,
+                        source, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (name, group_id, int(is_internal), notes, address, website,
+                 source, _now(), _now()),
             )
             self.conn.commit()
             return int(cur.lastrowid)
 
         # Only let the new data win if its source is trusted at least as much
-        # as whatever is already recorded.
+        # as whatever is already recorded. Blank incoming values never erase
+        # what we already know.
         if outranks(source, row["source"]):
             self.conn.execute(
                 """UPDATE companies
                       SET group_id    = COALESCE(?, group_id),
                           is_internal = ?,
                           notes       = CASE WHEN ? <> '' THEN ? ELSE notes END,
+                          address     = CASE WHEN ? <> '' THEN ? ELSE address END,
+                          website     = CASE WHEN ? <> '' THEN ? ELSE website END,
                           source      = ?,
                           updated_at  = ?
                     WHERE id = ?""",
-                (group_id, int(is_internal), notes, notes, source, _now(), row["id"]),
+                (group_id, int(is_internal), notes, notes, address, address,
+                 website, website, source, _now(), row["id"]),
             )
             self.conn.commit()
         return int(row["id"])
@@ -250,6 +286,8 @@ class IdentityStore:
             is_internal=bool(row["is_internal"]),
             notes=row["notes"],
             source=row["source"],
+            address=row["address"],
+            website=row["website"],
             domains=domains,
         )
 
@@ -279,6 +317,8 @@ class IdentityStore:
         title: str = "",
         phone: str = "",
         mobile: str = "",
+        fax: str = "",
+        address: str = "",
         source: str = SOURCE_INFERRED,
         seen_at: str = "",
         bump_count: bool = False,
@@ -296,11 +336,13 @@ class IdentityStore:
             cur = self.conn.execute(
                 """INSERT INTO people
                        (email, display_name, company_id, department, title, phone,
-                        mobile, source, message_count, first_seen, last_seen)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        mobile, fax, address, source, message_count,
+                        first_seen, last_seen)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     email, display_name, company_id, department, title, phone,
-                    mobile, source, 1 if bump_count else 0, stamp, stamp,
+                    mobile, fax, address, source, 1 if bump_count else 0,
+                    stamp, stamp,
                 ),
             )
             self.conn.commit()
@@ -322,6 +364,8 @@ class IdentityStore:
                           title         = CASE WHEN ? <> '' THEN ? ELSE title END,
                           phone         = CASE WHEN ? <> '' THEN ? ELSE phone END,
                           mobile        = CASE WHEN ? <> '' THEN ? ELSE mobile END,
+                          fax           = CASE WHEN ? <> '' THEN ? ELSE fax END,
+                          address       = CASE WHEN ? <> '' THEN ? ELSE address END,
                           source        = ?,
                           message_count = ?,
                           first_seen    = ?,
@@ -331,6 +375,7 @@ class IdentityStore:
                     display_name, display_name, company_id,
                     department, department, title, title,
                     phone, phone, mobile, mobile,
+                    fax, fax, address, address,
                     source, count, first_seen, last_seen, row["id"],
                 ),
             )
@@ -359,6 +404,8 @@ class IdentityStore:
             title=row["title"],
             phone=row["phone"],
             mobile=row["mobile"],
+            fax=row["fax"],
+            address=row["address"],
             source=row["source"],
             message_count=row["message_count"],
             first_seen=row["first_seen"],

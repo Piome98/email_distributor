@@ -168,6 +168,108 @@ class TestResolve(StoreTestCase):
             self.assertIn(part, text)
 
 
+class TestSchemaMigration(unittest.TestCase):
+    """An existing database must survive the app gaining new columns.
+
+    CREATE TABLE IF NOT EXISTS silently does nothing for a database that
+    already exists, so without an explicit migration an upgraded install would
+    fail on every query naming a new column.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self._tmp.name) / "old.db"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _create_old_database(self):
+        import sqlite3
+
+        conn = sqlite3.connect(str(self.path))
+        conn.executescript(
+            """
+            CREATE TABLE groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT NOT NULL DEFAULT '');
+            CREATE TABLE companies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                group_id INTEGER,
+                is_internal INTEGER NOT NULL DEFAULT 0,
+                notes TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'inferred',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL);
+            CREATE TABLE domains (
+                domain TEXT PRIMARY KEY,
+                company_id INTEGER NOT NULL,
+                source TEXT NOT NULL DEFAULT 'inferred');
+            CREATE TABLE people (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL DEFAULT '',
+                company_id INTEGER,
+                department TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL DEFAULT '',
+                phone TEXT NOT NULL DEFAULT '',
+                mobile TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'inferred',
+                message_count INTEGER NOT NULL DEFAULT 0,
+                first_seen TEXT NOT NULL DEFAULT '',
+                last_seen TEXT NOT NULL DEFAULT '');
+            CREATE TABLE processed (
+                entry_id TEXT PRIMARY KEY,
+                processed_at TEXT NOT NULL,
+                rule_name TEXT NOT NULL DEFAULT '',
+                action TEXT NOT NULL DEFAULT '');
+            INSERT INTO companies (name, created_at, updated_at)
+                VALUES ('기존회사', '2026-01-01', '2026-01-01');
+            INSERT INTO people (email, display_name) VALUES ('a@x.co.kr', '홍길동');
+            """
+        )
+        conn.commit()
+        conn.close()
+
+    def test_new_columns_are_added_to_an_existing_database(self):
+        self._create_old_database()
+        store = IdentityStore(self.path)
+        try:
+            company = store.list_companies()[0]
+            person = store.person_by_email("a@x.co.kr")
+            self.assertEqual(company.name, "기존회사")
+            self.assertEqual(company.address, "")
+            self.assertEqual(company.website, "")
+            self.assertEqual(person.display_name, "홍길동")
+            self.assertEqual(person.address, "")
+            self.assertEqual(person.fax, "")
+        finally:
+            store.close()
+
+    def test_migration_is_idempotent(self):
+        self._create_old_database()
+        for _ in range(3):
+            store = IdentityStore(self.path)
+            store.close()
+        store = IdentityStore(self.path)
+        try:
+            self.assertEqual(len(store.list_companies()), 1)
+        finally:
+            store.close()
+
+    def test_existing_rows_can_be_updated_with_new_fields(self):
+        self._create_old_database()
+        store = IdentityStore(self.path)
+        try:
+            store.upsert_company(
+                "기존회사", address="서울시 강남구", source=SOURCE_MANUAL
+            )
+            self.assertEqual(store.list_companies()[0].address, "서울시 강남구")
+        finally:
+            store.close()
+
+
 class TestProcessedLedger(StoreTestCase):
     def test_marking_and_checking(self):
         self.assertFalse(self.store.is_processed("ENTRY1"))

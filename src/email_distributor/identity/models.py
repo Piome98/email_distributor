@@ -45,6 +45,8 @@ class Company:
     is_internal: bool = False
     notes: str = ""
     source: str = SOURCE_INFERRED
+    address: str = ""
+    website: str = ""
     domains: list[str] = field(default_factory=list)
     id: Optional[int] = None
 
@@ -58,6 +60,8 @@ class Person:
     title: str = ""
     phone: str = ""
     mobile: str = ""
+    fax: str = ""
+    address: str = ""
     source: str = SOURCE_INFERRED
     message_count: int = 0
     first_seen: str = ""

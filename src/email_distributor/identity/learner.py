@@ -147,6 +147,15 @@ class Learner:
                 )
                 self.store.link_domain(domain, company_id, SOURCE_SIGNATURE)
                 return company_id
+            # Still record contact details we did not have before, without
+            # touching the name.
+            if sig and (sig.address or sig.website):
+                self.store.upsert_company(
+                    existing.name,
+                    address=sig.address,
+                    website=sig.website,
+                    source=existing.source,
+                )
             return existing.id
 
         if sig and sig.company:
@@ -156,7 +165,14 @@ class Learner:
         if not name:
             return None
 
-        company_id = self.store.upsert_company(name, source=source)
+        # The office address in a footer describes the organisation, so it is
+        # recorded against the company rather than against one employee.
+        company_id = self.store.upsert_company(
+            name,
+            address=(sig.address if sig else ""),
+            website=(sig.website if sig else ""),
+            source=source,
+        )
         if name.lower() not in self._known_companies:
             self._known_companies.add(name.lower())
         self.store.link_domain(domain, company_id, source)
@@ -185,18 +201,44 @@ class Learner:
         # is kept; only the person-level fields are discarded.
         role_account = is_role_account(email)
 
+        # Only a genuine personal sign-off may name the sender's company.
+        #
+        # Newsletters quote other organisations constantly - a recruitment
+        # mailshot from saramin.co.kr advertises jobs at ㈜카카오페이 - and
+        # trusting those turned the sender's employer into whichever company
+        # the marketing copy happened to mention. Bulk mail therefore keeps
+        # the name derived from its own domain, which is always about right.
+        company_sig = usable if (usable and usable.personal and not role_account) else None
+
         if domain in PUBLIC_DOMAINS:
             stats.skipped_public += 1
 
         before = self.store.stats()["companies"]
-        company_id = self._company_for(domain, usable)
+        company_id = self._company_for(domain, company_sig)
         if self.store.stats()["companies"] > before:
             stats.companies_created += 1
+
+        # An office address in a footer describes the sending organisation even
+        # when the mail is a newsletter, so it is recorded whatever we decided
+        # about the name.
+        if company_id and usable and (usable.address or usable.website):
+            company = self.store.company_by_id(company_id)
+            if company is not None:
+                self.store.upsert_company(
+                    company.name,
+                    address=usable.address,
+                    website=usable.website,
+                    source=company.source,
+                )
 
         stamp = message.received.isoformat(timespec="seconds") if message.received else ""
         seen_before = self.store.person_by_email(email) is not None
 
-        person_fields = usable if (usable and not role_account) else None
+        # Person-level details need the same evidence: without a real sign-off
+        # a "department" is just a noun lifted out of marketing copy.
+        person_fields = (
+            usable if (usable and usable.personal and not role_account) else None
+        )
         self.store.upsert_person(
             email,
             display_name=(
@@ -209,6 +251,8 @@ class Learner:
             title=(person_fields.title if person_fields else ""),
             phone=(person_fields.phone if person_fields else ""),
             mobile=(person_fields.mobile if person_fields else ""),
+            fax=(person_fields.fax if person_fields else ""),
+            address=(person_fields.address if person_fields else ""),
             source=(
                 SOURCE_SIGNATURE
                 if person_fields and not person_fields.is_empty()

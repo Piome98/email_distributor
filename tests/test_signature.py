@@ -137,6 +137,176 @@ class TestBulkMailIsNotAPerson(unittest.TestCase):
         self.assertEqual(info.department, "Overseas Sales Team")
 
 
+class TestLabelledFields(unittest.TestCase):
+    """Korean corporate footers label their fields; reading the label beats
+    guessing from position. These blocks are modelled on real mail."""
+
+    def test_address_label(self):
+        info = signature.parse(
+            "(주)사람인\n대표 : 황현순\n"
+            "주소 : 서울특별시 강서구 공항대로 000, 원그로브 C동 00층\n"
+            "문의처: 02-1111-2222, help@saramin.co.kr"
+        )
+        self.assertEqual(info.company, "(주)사람인")
+        self.assertEqual(
+            info.address, "서울특별시 강서구 공항대로 000, 원그로브 C동 00층"
+        )
+
+    def test_munuicheo_is_a_landline_not_a_mobile(self):
+        """"문의처" is an office contact number, not somebody's mobile."""
+        info = signature.parse("(주)사람인\n문의처: 02-1111-2222")
+        self.assertEqual(info.phone, "02-1111-2222")
+        self.assertEqual(info.mobile, "")
+
+    def test_labelled_phone_email_and_website(self):
+        info = signature.parse(
+            "㈜ 위시켓\n서울특별시 강남구 테헤란로 000 0층\n"
+            "전화 : 02-3333-4444\n이메일 : help@wishket.com\n"
+            "홈페이지 : https://wishket.com"
+        )
+        self.assertEqual(info.company, "㈜ 위시켓")
+        self.assertEqual(info.phone, "02-3333-4444")
+        self.assertEqual(info.email, "help@wishket.com")
+        self.assertEqual(info.website, "https://wishket.com")
+
+    def test_unlabelled_korean_address_is_still_found(self):
+        info = signature.parse(
+            "DMK Global\n서울특별시 종로구 새문안로 00, 광화문오피시아빌딩 000호"
+        )
+        self.assertTrue(info.address.startswith("서울특별시 종로구"))
+
+    def test_labels_override_positional_guesses(self):
+        info = signature.parse(
+            "홍길동 부장 / 영업1팀\n(주)한국전자\n부서 : 해외영업팀\n직급 : 이사\nM. 010-1-1"
+        )
+        self.assertEqual(info.department, "해외영업팀")
+        self.assertEqual(info.title, "이사")
+
+    def test_company_found_on_a_very_long_footer_line(self):
+        """A packed one-line footer used to be dropped by the length filter."""
+        info = signature.parse(
+            "쿠팡페이(주) | 대표이사: 홍길동,김철수 ㅣ 사업자등록번호: 000-00-00000 "
+            "ㅣ (00000) 서울특별시 광진구 아차산로 000 (자양동)"
+        )
+        self.assertEqual(info.company, "쿠팡페이(주)")
+
+    def test_organisation_is_not_read_as_a_persons_name(self):
+        """"DMK Global" has the shape of a name but an all-caps token."""
+        info = signature.parse("DMK Global\ninfo@dmkglobal.co.kr | 02-111-2222")
+        self.assertNotEqual(info.name, "DMK Global")
+
+    def test_building_letter_is_not_a_mobile_label(self):
+        """"원그로브 C동" - a bare C used to be read as a mobile marker."""
+        info = signature.parse(
+            "(주)사람인\n주소 : 서울특별시 강서구 공항대로 000, 원그로브 C동 00층\n"
+            "문의처: 02-1111-2222"
+        )
+        self.assertEqual(info.mobile, "")
+        self.assertEqual(info.phone, "02-1111-2222")
+
+    def test_company_lifted_out_of_a_sentence(self):
+        info = signature.parse("안녕하십니까? 가온전선(주)입니다.\n채용 안내드립니다.")
+        self.assertEqual(info.company, "가온전선(주)")
+
+    def test_company_not_swallowed_by_surrounding_words(self):
+        info = signature.parse("고용형태: (주)서플러스글로벌 소속 정규직(수습 3개월)")
+        self.assertEqual(info.company, "(주)서플러스글로벌")
+
+    def test_english_company_stops_at_its_marker(self):
+        info = signature.parse(
+            "Microsoft Corporation, One Microsoft Way, Redmond, WA 98052"
+        )
+        self.assertEqual(info.company, "Microsoft Corporation")
+
+    def test_bare_marker_word_is_not_a_company(self):
+        info = signature.parse("company\nsomething else\nM. 010-1-1")
+        self.assertEqual(info.company, "")
+
+    def test_building_name_in_an_address_is_not_a_department(self):
+        info = signature.parse(
+            "김철수 대리\n서울특별시 강남구 테헤란로 000, 00층 (역삼동, 한국지식재산센터)\n"
+            "M. 010-1111-2222"
+        )
+        self.assertNotEqual(info.department, "한국지식재산센터")
+
+    def test_copyright_prefix_stripped_from_company(self):
+        info = signature.parse("Some newsletter text\n© 2026 Google LLC\nView online")
+        self.assertEqual(info.company, "Google LLC")
+
+    def test_recruitment_word_is_not_a_persons_name(self):
+        """"인턴사원" is a job grade, not the person 인턴 ranked 사원."""
+        info = signature.parse("가온전선(주) 인턴사원 모집 안내")
+        self.assertNotEqual(info.name, "인턴")
+
+    def test_qualification_prefix_is_not_a_name(self):
+        """"공인회계사" is one qualification, not 공인 ranked 회계사."""
+        info = signature.parse("공인회계사 사무소 안내\n02-111-2222")
+        self.assertNotEqual(info.name, "공인")
+
+    def test_korean_conjunction_is_not_a_department(self):
+        """과 is the everyday word "and"; "행동과 심리" is not a department."""
+        info = signature.parse("이규호 팀장\n행동과 심리 뉴스레터\nM. 010-1-1")
+        self.assertNotEqual(info.department, "행동과")
+
+    def test_a_real_latin_name_still_parses(self):
+        info = signature.parse("John Smith\nAcme Co., Ltd.\nM. 010-1234-5678")
+        self.assertEqual(info.name, "John Smith")
+
+
+class TestPersonalFlag(unittest.TestCase):
+    """`personal` gates whether a signature may name the sender's company.
+
+    Newsletters quote other organisations constantly, so trusting them made a
+    recruitment mailshot's advertised employer become the sender's own company.
+    """
+
+    def test_real_signature_is_personal(self):
+        info = signature.parse("홍길동 부장 / 영업1팀\n(주)한국전자\nM. 010-1-1")
+        self.assertTrue(info.personal)
+
+    def test_english_signature_is_personal(self):
+        info = signature.parse("John Smith\nAcme Co., Ltd.\nM. 010-1234-5678")
+        self.assertTrue(info.personal)
+
+    def test_labelled_name_is_personal(self):
+        info = signature.parse("성명 : 김철수\n(주)대한")
+        self.assertTrue(info.personal)
+
+    def test_newsletter_footer_is_not_personal(self):
+        info = signature.parse(
+            "(주)사람인\n주소 : 서울특별시 강서구 공항대로 000\n문의처: 02-1111-2222\n"
+            "이번주 추천 공고: ㈜카카오페이 신입 채용"
+        )
+        self.assertFalse(info.personal)
+
+    def test_company_still_extracted_from_a_non_personal_footer(self):
+        """Not personal, but the footer's own details are still readable."""
+        info = signature.parse("(주)사람인\n주소 : 서울특별시 강서구 공항대로 000")
+        self.assertEqual(info.company, "(주)사람인")
+        self.assertTrue(info.address)
+
+
+class TestTrackingTokensAreNotCompanies(unittest.TestCase):
+    def test_marker_glued_inside_a_token_is_ignored(self):
+        info = signature.parse("unsubscribe\neNg-xIMAkWZ6XpLcInc\nfooter")
+        self.assertEqual(info.company, "")
+
+    def test_marketing_copy_is_not_scanned_for_a_company(self):
+        long_ad = (
+            "이번 주 추천 채용 공고를 확인해 보세요. 지원자 여러분께 딱 맞는 "
+            "포지션을 골라 담았습니다. 아래에서 ㈜카카오페이 채용 소식을 만나보세요."
+        )
+        info = signature.parse(f"{long_ad}\n수신거부")
+        self.assertEqual(info.company, "")
+
+    def test_statutory_footer_line_is_still_scanned(self):
+        info = signature.parse(
+            "쿠팡페이(주) | 대표이사: 홍길동 ㅣ 사업자등록번호: 000-00-00000 "
+            "ㅣ (00000) 서울특별시 광진구 아차산로 000 (자양동)"
+        )
+        self.assertEqual(info.company, "쿠팡페이(주)")
+
+
 class TestFieldsAreClean(unittest.TestCase):
     def test_no_field_contains_a_newline_or_double_space(self):
         info = signature.parse(

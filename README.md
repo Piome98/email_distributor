@@ -190,9 +190,11 @@ and don't need Outlook.
   fallbacks.
 - **Identity model** — Group → Company → Person on SQLite, with
   `manual > signature > inferred` source precedence enforced on every write.
-- **Signature parser** — mixed Korean/English blocks; extracts name, rank,
-  department, company, landline and mobile. Skips quoted reply chains, legal
-  disclaimers, and fax numbers.
+- **Signature parser** — mixed Korean/English blocks. Reads *declared labels*
+  first (`주소 :`, `문의처:`, `전화 :`, `부서 :`), falling back to positional
+  heuristics only for what the labels leave unset. Extracts name, rank,
+  department, company, **office address**, landline, mobile, fax and website.
+  Skips quoted reply chains, legal disclaimers and fax numbers.
 - **Learner** — builds the database from Inbox, Inbox subfolders and Sent Items.
 - **Rules engine** — JSON rules, `all`/`any` matching, ordered evaluation with
   `stop_on_match`, placeholder expansion.
@@ -207,7 +209,7 @@ and don't need Outlook.
 
 ### Verified
 
-- Full test suite passes (71 tests).
+- Full test suite passes (100 tests).
 - CLI runs (`status`, `--help`).
 - UI builds, renders both tree views, loads rules, closes cleanly.
 - **Live Outlook run**, against a real mailbox of 603 messages: connected,
@@ -228,6 +230,27 @@ covered by regression tests:
 3. The single-character unit suffixes 국, 처 and 단 matched far more ordinary
    Korean words than departments; `한국고등교육재단` was being filed as
    somebody's team. Those three suffixes are gone.
+
+A second pass over real footers drove a redesign of the parser and one
+important correction to the learner:
+
+4. **Labels are now read before anything is inferred.** Korean footers declare
+   their fields (`주소 :`, `문의처:`, `전화 :`), and reading the label beats
+   guessing from position. This added the office **address**, plus fax and
+   website. `문의처` is correctly a landline, not a mobile.
+5. **A signature may only name the sender's company if a real person signed
+   off.** Newsletters quote other organisations constantly — a recruitment
+   mailshot from `saramin.co.kr` advertises jobs at `㈜카카오페이` — and
+   trusting that made the *advertised* employer become the sender's company.
+   Bulk mail now keeps the name derived from its own domain. This was a
+   regression introduced by widening the company scan, caught only by running
+   against the real mailbox again; company count fell from 53 (mostly junk
+   like `eNg-xIMAkWZ6XpLc`) back to 44 correct ones.
+6. Smaller real-data fixes: a bare `C` in `원그로브 C동 12층` was read as a
+   mobile marker; `DMK Global` was stored as a person's name; `공인회계사` was
+   split into the person 공인 ranked 회계사; `© 2026 Google LLC` kept its
+   copyright prefix; and 과 — the everyday conjunction "and" — was dropped as
+   a unit suffix after `행동과 심리` became the department `행동과`.
 
 ### Not yet done
 
