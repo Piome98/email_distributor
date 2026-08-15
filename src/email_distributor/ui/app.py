@@ -192,7 +192,30 @@ class App(tk.Tk):
         ttk.Button(bar, text="새로고침", command=self._refresh_companies).pack(side="left")
         ttk.Button(bar, text="수정 (Edit)", command=self._edit_company).pack(side="left", padx=4)
         ttk.Button(bar, text="삭제 (Delete)", command=self._delete_company).pack(side="left")
-        ttk.Label(bar, text="  회사명을 실제 상호로 바꾸면 폴더 이름도 함께 바뀝니다.").pack(side="left", padx=8)
+
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=10)
+        # Bulk assignment matters: only grouped companies are filed, and a real
+        # mailbox yields a hundred-plus companies. Setting them one dialog at a
+        # time is the difference between the tool being used and abandoned.
+        ttk.Label(bar, text="선택한 회사를 그룹으로:").pack(side="left")
+        self.var_bulk_group = tk.StringVar(value="고객사")
+        self.combo_bulk_group = ttk.Combobox(
+            bar, textvariable=self.var_bulk_group, width=14,
+            values=["고객사", "협력사", "그룹사", "사내", "기타"],
+        )
+        self.combo_bulk_group.pack(side="left", padx=4)
+        ttk.Button(bar, text="지정 (Assign)", command=self._bulk_assign_group).pack(
+            side="left"
+        )
+        ttk.Button(bar, text="해제 (Clear)", command=self._bulk_clear_group).pack(
+            side="left", padx=4
+        )
+
+        ttk.Label(
+            frame,
+            text="그룹이 지정된 회사만 분류됩니다. Ctrl/Shift 로 여러 개를 선택할 수 있습니다.",
+            foreground="#555555",
+        ).pack(anchor="w", padx=8)
 
         columns = ("name", "group", "internal", "domains", "address", "people")
         self.tree_companies = ttk.Treeview(frame, columns=columns, show="headings")
@@ -206,6 +229,7 @@ class App(tk.Tk):
         ):
             self.tree_companies.heading(col, text=text)
             self.tree_companies.column(col, width=width, anchor="w")
+        self.tree_companies.configure(selectmode="extended")
         self.tree_companies.pack(fill="both", expand=True, padx=6, pady=(0, 6))
         self.tree_companies.bind("<Double-1>", lambda _e: self._edit_company())
 
@@ -533,6 +557,44 @@ class App(tk.Tk):
     def _selected_company_id(self) -> Optional[int]:
         selection = self.tree_companies.selection()
         return int(selection[0]) if selection else None
+
+    def _selected_company_ids(self) -> list[int]:
+        return [int(iid) for iid in self.tree_companies.selection()]
+
+    def _bulk_assign_group(self) -> None:
+        ids = self._selected_company_ids()
+        group = self.var_bulk_group.get().strip()
+        if not ids:
+            messagebox.showinfo("선택 필요", "먼저 회사를 선택하세요. (Ctrl/Shift 로 여러 개 선택)")
+            return
+        if not group:
+            messagebox.showinfo("그룹 필요", "지정할 그룹 이름을 입력하세요.")
+            return
+
+        for company_id in ids:
+            company = self.store.company_by_id(company_id)
+            if company is not None:
+                self.store.upsert_company(
+                    company.name, group=group, source=SOURCE_MANUAL
+                )
+        self._refresh_companies()
+        self._log("info", f"{len(ids)}개 회사를 '{group}' 그룹으로 지정했습니다.")
+        # Refresh the dropdown so a newly invented group is offered next time.
+        self.combo_bulk_group.configure(
+            values=sorted({g.name for g in self.store.list_groups()})
+        )
+
+    def _bulk_clear_group(self) -> None:
+        ids = self._selected_company_ids()
+        if not ids:
+            return
+        for company_id in ids:
+            self.store.conn.execute(
+                "UPDATE companies SET group_id = NULL WHERE id = ?", (company_id,)
+            )
+        self.store.conn.commit()
+        self._refresh_companies()
+        self._log("info", f"{len(ids)}개 회사의 그룹을 해제했습니다. (분류 대상에서 제외)")
 
     def _edit_company(self) -> None:
         company_id = self._selected_company_id()

@@ -307,6 +307,10 @@ class Learner:
                     else ""
                 ),
                 bump_count=True,
+                # This came from Sent Items, so it records that the user chose
+                # to write to this person - the signal that tells a real
+                # business contact apart from a mailing list.
+                bump_sent=True,
             )
             if not seen_before:
                 stats.people_seen += 1

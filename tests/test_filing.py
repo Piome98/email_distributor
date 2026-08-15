@@ -229,6 +229,54 @@ class TestUnresolvedSender(FilingTestCase):
         self.assertEqual(client.moved, [])
 
 
+class TestTagOnlyIsNotConsumed(FilingTestCase):
+    """A message that was only tagged must stay eligible for filing later.
+
+    Recording it as processed would consume it permanently: once its company
+    is confirmed as a 거래처, the message would be skipped forever and never
+    reach its folder.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.ruleset = RuleSet([
+            Rule(
+                name="tag only",
+                match=Match(),
+                actions=Actions(categories=["미분류"]),
+            )
+        ])
+
+    def test_tag_only_does_not_enter_the_ledger(self):
+        client = FakeClient()
+        dist = self.distributor(client)
+        dist._process_one(FakeItem("E1"), make_message(), reprocess=False)
+
+        self.assertEqual(client.categorised, [("E1", ["미분류"])])
+        self.assertEqual(client.moved, [])
+        self.assertFalse(self.store.is_processed("E1"))
+
+    def test_it_is_filed_once_the_rules_start_moving_it(self):
+        client = FakeClient()
+        self.distributor(client)._process_one(
+            FakeItem("E1"), make_message(), reprocess=False
+        )
+
+        # The company is confirmed later, so the rules now move it.
+        self.ruleset = RuleSet([
+            Rule(
+                name="file it",
+                match=Match(),
+                actions=Actions(move_to="Inbox/거래처/{company}"),
+            )
+        ])
+        result = self.distributor(client)._process_one(
+            FakeItem("E1"), make_message(), reprocess=False
+        )
+        self.assertEqual(result.skipped_reason, "")
+        self.assertEqual(client.moved, [("E1", "Inbox/거래처/한국전자")])
+
+
 class TestDryRun(FilingTestCase):
     def test_dry_run_changes_nothing(self):
         self.settings.dry_run = True

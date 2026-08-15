@@ -180,27 +180,36 @@ class TestDefaultRuleset(unittest.TestCase):
         self.assertEqual(decision.rule_names, ["사내 메일 (internal)"])
         self.assertEqual(decision.move_to, "")  # colleagues are tagged, not moved
 
-    def test_grouped_company_is_filed_under_company_then_contact(self):
-        """거래처/담당자: one folder per company, one per contact inside it."""
-        identity = make_identity(display_name="홍길동")
+    def test_company_you_have_written_to_is_filed(self):
+        """The main path, and it needs no setup: Sent Items proves the tie."""
+        identity = make_identity(
+            display_name="홍길동",
+            company=Company(name="한국전자", group_name=""),
+            has_correspondence=True,
+        )
         decision = default_ruleset().evaluate(make_message(), identity)
         self.assertEqual(decision.move_to, "Inbox/거래처/한국전자/홍길동")
         self.assertIn("한국전자", decision.categories)
 
+    def test_manually_grouped_company_is_filed_even_without_correspondence(self):
+        identity = make_identity(display_name="홍길동")  # group 고객사, no sent mail
+        decision = default_ruleset().evaluate(make_message(), identity)
+        self.assertEqual(decision.move_to, "Inbox/거래처/한국전자/홍길동")
+
     def test_contact_without_a_display_name_uses_the_mailbox_name(self):
-        identity = make_identity(display_name="")
+        identity = make_identity(display_name="", has_correspondence=True)
         decision = default_ruleset().evaluate(make_message(), identity)
         self.assertEqual(decision.move_to, "Inbox/거래처/한국전자/hong")
 
-    def test_company_without_a_group_is_left_in_the_inbox(self):
-        """The decisive rule.
+    def test_newsletter_sender_is_left_in_the_inbox(self):
+        """The decisive case.
 
-        The learner invents a company for every domain it meets, newsletters
-        included. Only a company the user has put into a group counts as a
-        confirmed 거래처; everything else stays put to be sorted by hand.
+        The learner invents a company for every domain it meets, so simply
+        being "known" proves nothing. Instagram has never been written to and
+        has no group, so its mail stays where the user can see it.
         """
-        ungrouped = make_identity(company=Company(name="Instagram", group_name=""))
-        decision = default_ruleset().evaluate(make_message(), ungrouped)
+        newsletter = make_identity(company=Company(name="Instagram", group_name=""))
+        decision = default_ruleset().evaluate(make_message(), newsletter)
         self.assertEqual(decision.move_to, "")
         self.assertEqual(decision.categories, ["미분류"])
 

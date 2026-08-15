@@ -17,8 +17,9 @@ import time
 
 from .actions.filing import Distributor
 from .actions.folders import FolderBuilder
-from .config import Settings, data_dir, log_path, rules_path
+from .config import PUBLIC_DOMAINS, Settings, data_dir, log_path, rules_path
 from .identity.learner import Learner
+from .identity.models import SOURCE_MANUAL
 from .identity.store import IdentityStore
 from .outlook.client import COM_AVAILABLE, OutlookClient, OutlookError
 from .rules.engine import RuleSet
@@ -107,10 +108,20 @@ def cmd_learn(args: argparse.Namespace) -> int:
     with OutlookClient() as client, IdentityStore() as store:
         if not settings.internal_domains:
             address = client.current_user_address()
-            if "@" in address:
-                settings.internal_domains = [address.rsplit("@", 1)[1]]
+            domain = address.rsplit("@", 1)[1].lower() if "@" in address else ""
+            if domain and domain in PUBLIC_DOMAINS:
+                # Your own address is at a public provider, so its domain says
+                # nothing about who your colleagues are. Treating gmail.com as
+                # "internal" would mark every Gmail sender on earth a colleague.
+                print(
+                    f"Your address is at {domain}, a public provider, so no internal\n"
+                    "domain was set. On a work PC this is detected from your company\n"
+                    "address; set it by hand on the Settings tab if you need it."
+                )
+            elif domain:
+                settings.internal_domains = [domain]
                 settings.save()
-                print(f"Detected internal domain: {settings.internal_domains[0]}")
+                print(f"Detected internal domain: {domain}")
 
         # Applied after any save, so a one-off --limit stays one-off. Setting
         # it before would persist a throwaway value into settings.json and
@@ -207,6 +218,42 @@ def cmd_folders(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_group(args: argparse.Namespace) -> int:
+    """Confirm companies as 거래처 in bulk.
+
+    Only grouped companies are filed, and a real mailbox produces a hundred or
+    more companies, so there has to be a way to confirm them without opening a
+    dialog for each one.
+    """
+    with IdentityStore() as store:
+        companies = store.list_companies()
+        chosen = [
+            c
+            for c in companies
+            if len(store.list_people(c.id)) >= args.min_contacts
+            and sum(p.message_count for p in store.list_people(c.id)) >= args.min_messages
+            and (not args.match or args.match.lower() in c.name.lower())
+        ]
+
+        if not chosen:
+            print("No company matched. Loosen --min-messages or --match.")
+            return 0
+
+        print(f"{'Would assign' if not args.live else 'Assigning'} group "
+              f"{args.name!r} to {len(chosen)} company(ies):\n")
+        for c in chosen:
+            total = sum(p.message_count for p in store.list_people(c.id))
+            print(f"   {c.name[:40]:42} {total:5} messages   {c.group_name or '-'}")
+            if args.live:
+                store.upsert_company(c.name, group=args.name, source=SOURCE_MANUAL)
+
+        if args.live:
+            print(f"\nDone. {len(chosen)} company(ies) are now filed as {args.name!r}.")
+        else:
+            print("\nRe-run with --live to apply.")
+    return 0
+
+
 def cmd_watch(_args: argparse.Namespace) -> int:
     settings = Settings.load()
     watcher = Watcher(settings, on_event=lambda level, text: print(f"[{level}] {text}"))
@@ -247,6 +294,20 @@ def build_parser() -> argparse.ArgumentParser:
     learn = sub.add_parser("learn", help="build the identity DB from your mailbox")
     learn.add_argument("--limit", type=int, default=0, help="max messages per folder")
     learn.set_defaults(func=cmd_learn)
+
+    group = sub.add_parser(
+        "group", help="confirm companies as 거래처 in bulk (only these get filed)"
+    )
+    group.add_argument("name", help="group to assign, e.g. 고객사")
+    group.add_argument(
+        "--min-messages", type=int, default=1, help="only companies with at least this much traffic"
+    )
+    group.add_argument(
+        "--min-contacts", type=int, default=1, help="only companies with at least this many contacts"
+    )
+    group.add_argument("--match", default="", help="only companies whose name contains this")
+    group.add_argument("--live", action="store_true", help="apply (default: preview)")
+    group.set_defaults(func=cmd_group)
 
     folders = sub.add_parser(
         "folders", help="create the 업체/담당자 folder tree in Outlook"

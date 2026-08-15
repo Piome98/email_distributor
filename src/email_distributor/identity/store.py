@@ -66,6 +66,10 @@ CREATE TABLE IF NOT EXISTS people (
     address       TEXT NOT NULL DEFAULT '',
     source        TEXT NOT NULL DEFAULT 'inferred',
     message_count INTEGER NOT NULL DEFAULT 0,
+    -- Messages *you sent to* this person. Mail you chose to write is the
+    -- clearest evidence of a real working relationship: newsletters arrive in
+    -- their thousands and are never replied to.
+    sent_count    INTEGER NOT NULL DEFAULT 0,
     first_seen    TEXT NOT NULL DEFAULT '',
     last_seen     TEXT NOT NULL DEFAULT ''
 );
@@ -115,6 +119,7 @@ class IdentityStore:
             ("companies", "website", "TEXT NOT NULL DEFAULT ''"),
             ("people", "fax", "TEXT NOT NULL DEFAULT ''"),
             ("people", "address", "TEXT NOT NULL DEFAULT ''"),
+            ("people", "sent_count", "INTEGER NOT NULL DEFAULT 0"),
         )
         for table, column, declaration in additions:
             existing = {
@@ -322,6 +327,7 @@ class IdentityStore:
         source: str = SOURCE_INFERRED,
         seen_at: str = "",
         bump_count: bool = False,
+        bump_sent: bool = False,
     ) -> Optional[int]:
         email = email.strip().lower()
         if not email or "@" not in email:
@@ -336,13 +342,13 @@ class IdentityStore:
             cur = self.conn.execute(
                 """INSERT INTO people
                        (email, display_name, company_id, department, title, phone,
-                        mobile, fax, address, source, message_count,
+                        mobile, fax, address, source, message_count, sent_count,
                         first_seen, last_seen)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     email, display_name, company_id, department, title, phone,
                     mobile, fax, address, source, 1 if bump_count else 0,
-                    stamp, stamp,
+                    1 if bump_sent else 0, stamp, stamp,
                 ),
             )
             self.conn.commit()
@@ -353,6 +359,7 @@ class IdentityStore:
         first_seen = min(filter(None, [row["first_seen"], stamp]), default=stamp)
         last_seen = max(filter(None, [row["last_seen"], stamp]), default=stamp)
         count = row["message_count"] + (1 if bump_count else 0)
+        sent = row["sent_count"] + (1 if bump_sent else 0)
 
         if outranks(source, row["source"]):
             # Empty incoming values must not erase what we already know.
@@ -368,6 +375,7 @@ class IdentityStore:
                           address       = CASE WHEN ? <> '' THEN ? ELSE address END,
                           source        = ?,
                           message_count = ?,
+                          sent_count    = ?,
                           first_seen    = ?,
                           last_seen     = ?
                     WHERE id = ?""",
@@ -376,15 +384,16 @@ class IdentityStore:
                     department, department, title, title,
                     phone, phone, mobile, mobile,
                     fax, fax, address, address,
-                    source, count, first_seen, last_seen, row["id"],
+                    source, count, sent, first_seen, last_seen, row["id"],
                 ),
             )
         else:
             self.conn.execute(
                 """UPDATE people
-                      SET message_count = ?, first_seen = ?, last_seen = ?
+                      SET message_count = ?, sent_count = ?,
+                          first_seen = ?, last_seen = ?
                     WHERE id = ?""",
-                (count, first_seen, last_seen, row["id"]),
+                (count, sent, first_seen, last_seen, row["id"]),
             )
         self.conn.commit()
         return int(row["id"])
@@ -408,6 +417,7 @@ class IdentityStore:
             address=row["address"],
             source=row["source"],
             message_count=row["message_count"],
+            sent_count=row["sent_count"],
             first_seen=row["first_seen"],
             last_seen=row["last_seen"],
         )
@@ -460,7 +470,21 @@ class IdentityStore:
             is_internal=bool(domain and domain in internal)
             or bool(company and company.is_internal),
             is_public_domain=domain in PUBLIC_DOMAINS,
+            has_correspondence=(
+                bool(person and person.sent_count)
+                or (company is not None and self.company_has_correspondence(company.id))
+            ),
         )
+
+    def company_has_correspondence(self, company_id: Optional[int]) -> bool:
+        """True if you have ever sent mail to anybody at this company."""
+        if company_id is None:
+            return False
+        row = self.conn.execute(
+            "SELECT 1 FROM people WHERE company_id = ? AND sent_count > 0 LIMIT 1",
+            (company_id,),
+        ).fetchone()
+        return row is not None
 
     # ------------------------------------------------------------------
     # Processed-message bookkeeping

@@ -226,6 +226,18 @@ class Distributor:
         try:
             result.applied, new_entry_id = self.apply(item, decision)
             rules = " + ".join(decision.rule_names)
+
+            # Only a message that was actually filed counts as handled.
+            #
+            # A tag-only decision leaves the message exactly where it was, so
+            # recording it as processed would permanently consume it: once the
+            # rules improve - a company gets confirmed as a 거래처 - the message
+            # would be skipped forever and never reach its folder. Re-tagging on
+            # a later pass is harmless, because adding a category the message
+            # already has changes nothing.
+            if not decision.move_to:
+                return result
+
             self.store.mark_processed(message.entry_id, rules, decision.describe())
             # Outlook issues a new EntryID when a message changes folder, so
             # the pre-move id alone would not recognise this message again.

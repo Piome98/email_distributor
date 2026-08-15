@@ -64,6 +64,7 @@ class Person:
     address: str = ""
     source: str = SOURCE_INFERRED
     message_count: int = 0
+    sent_count: int = 0
     first_seen: str = ""
     last_seen: str = ""
     id: Optional[int] = None
@@ -81,6 +82,12 @@ class Identity:
     group_name: str = ""
     is_internal: bool = False
     is_public_domain: bool = False
+
+    # True when you have actually written to somebody at this company. Mail you
+    # chose to send is the strongest available evidence of a real working
+    # relationship - it is what separates a 거래처 from a newsletter, without
+    # anyone having to classify anything by hand.
+    has_correspondence: bool = False
 
     @property
     def company_name(self) -> str:

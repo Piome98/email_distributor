@@ -96,6 +96,10 @@ class Match:
     # automatically, so without this test the rules would file Instagram and
     # Reddit alongside real customers.
     has_group: Optional[bool] = None
+
+    # True when you have written to somebody at this company. Unlike has_group
+    # this needs no manual step: it is read straight out of Sent Items.
+    has_correspondence: Optional[bool] = None
     has_attachments: Optional[bool] = None
     unread_only: Optional[bool] = None
     importance_min: Optional[int] = None
@@ -136,6 +140,8 @@ class Match:
             results.append(identity.is_public_domain == self.is_public_domain)
         if self.has_group is not None:
             results.append(bool(identity.group_name) == self.has_group)
+        if self.has_correspondence is not None:
+            results.append(identity.has_correspondence == self.has_correspondence)
         if self.has_attachments is not None:
             results.append(message.has_attachments == self.has_attachments)
         if self.unread_only is not None:
@@ -308,16 +314,27 @@ def default_ruleset() -> RuleSet:
     filed as an external company, then confirmed 거래처 are filed under
     거래처/{업체}/{담당자}.
 
-    Only companies **you have put into a group** are filed. The learner turns
-    every domain it meets into a company, newsletters included, so without that
-    condition the rules would file Instagram and Reddit next to real customers
-    and empty the Inbox into folders that mean nothing. Assigning a group on
-    the Companies tab is the act of saying "this really is a 거래처".
+    A company is filed when either test says it is genuinely a 거래처:
+
+    * **you have written to them** - read straight out of Sent Items, so it
+      needs no setup at all; or
+    * **you gave them a group** on the Companies tab, which is the manual
+      override for a contact you have not yet replied to.
+
+    Neither test is "the learner saw this domain". That was tried and was
+    wrong: the learner invents a company for every domain it meets, so a plain
+    "is this company known?" test filed Instagram and Reddit beside real
+    customers and emptied the Inbox into a hundred meaningless folders.
+    Correspondence is the honest signal - nobody writes back to a newsletter.
 
     Everything else is deliberately **left in the Inbox** and merely tagged.
     Moving mail we cannot explain only relocates the problem into a folder
     nobody reads; the person reading it knows what it is, and can file it.
     """
+    filing = Actions(
+        move_to="Inbox/거래처/{company}/{person}",
+        categories=["{company}"],
+    )
     return RuleSet(
         [
             Rule(
@@ -326,15 +343,17 @@ def default_ruleset() -> RuleSet:
                 actions=Actions(categories=["사내"]),
             ),
             Rule(
-                name="거래처/담당자별 분류 (confirmed companies only)",
-                match=Match(is_unknown=False, has_group=True),
-                actions=Actions(
-                    move_to="Inbox/거래처/{company}/{person}",
-                    categories=["{group}", "{company}"],
-                ),
+                name="거래처 - 주고받은 상대 (you have written to them)",
+                match=Match(is_unknown=False, has_correspondence=True),
+                actions=filing,
             ),
             Rule(
-                name="미확인 - 받은 편지함에 그대로 둠 (not yet grouped: leave in Inbox)",
+                name="거래처 - 직접 지정한 그룹 (manually grouped)",
+                match=Match(is_unknown=False, has_group=True),
+                actions=filing,
+            ),
+            Rule(
+                name="미확인 - 받은 편지함에 그대로 둠 (leave in Inbox)",
                 match=Match(),
                 actions=Actions(categories=["미분류"]),
             ),
